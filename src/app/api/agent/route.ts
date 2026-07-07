@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
         sendLog("success", `Issue fetched: "${issue.title}"`);
         sendLog("action", "Analyzing semantic intent of issue body via Gemini...");
 
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash", generationConfig: { responseMimeType: "application/json" } });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite", generationConfig: { responseMimeType: "application/json" } });
 
         const prompt = `You are an AI maintainer. The user reported an issue:\nTitle: ${issue.title}\nBody: ${issue.body}\n\nDetermine the intent (e.g. TYPO_CORRECTION) and which file they are likely referring to. Respond in JSON format strictly matching this schema: { "intent": "string", "confidence": number, "file_path": "string", "instructions": "string" }. CRITICAL: Escape any quotation marks inside strings.`;
         
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
         sendLog("success", `File ${analysis.file_path} loaded successfully.`);
         sendLog("action", "Generating AST transformations and applying fixes...");
 
-        const fixModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        const fixModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
         const fixPrompt = `You are fixing code. Based on these instructions: "${analysis.instructions}", modify the following file content. Output ONLY the raw modified file content, with no markdown code blocks, no explanations.\n\nFile:\n${fileContent}`;
         
         const fixCompletion = await fixModel.generateContent(fixPrompt);
