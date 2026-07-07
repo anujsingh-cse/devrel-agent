@@ -175,7 +175,7 @@ export async function POST(req: NextRequest) {
 
         const { data: pr } = await octokit.rest.pulls.create({
           owner, repo,
-          title: `Fix: ${issue.title} (Auto-Generated)`,
+          title: `Fix: ${issue.title}`,
           body: `This PR automatically resolves #${issueNumber} based on the issue description. \n\n**Intent:** ${analysis.intent}\n**Instructions:** ${analysis.instructions}`,
           head: owner !== username ? `${username}:${branchName}` : branchName,
           base: defaultBranch
