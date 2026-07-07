@@ -58,12 +58,23 @@ export async function POST(req: NextRequest) {
           owner, repo, tree_sha: upstreamRepoData.default_branch, recursive: "true"
         });
         
-        const files = treeData.tree.filter((t: any) => t.type === 'blob').map((t: any) => t.path);
-        sendLog("success", `Fetched ${files.length} files from repository tree.`);
+        let files = treeData.tree
+          .filter((t: any) => t.type === 'blob')
+          .map((t: any) => t.path)
+          .filter((path: string) => !path.match(/\.(png|jpg|jpeg|gif|svg|ico|mp4|webp|lock|csv|jsonl|pdf|ttf|woff|woff2)$/i))
+          .filter((path: string) => !path.includes("node_modules/") && !path.includes("vendor/") && !path.includes("dist/") && !path.includes("build/") && !path.includes(".next/"));
+        
+        // GitHub Models free tier has an 8k token limit (~30k characters)
+        let filesString = files.join('\n');
+        if (filesString.length > 25000) {
+            filesString = filesString.substring(0, 25000) + "\n... (list truncated to fit limits)";
+        }
+
+        sendLog("success", `Filtered down to ${files.length} relevant files for context.`);
 
         sendLog("action", "Analyzing semantic intent of issue body via GPT-4o-mini...");
 
-        const prompt = `You are an AI maintainer. The user reported an issue:\nTitle: ${issue.title}\nBody: ${issue.body}\n\nDetermine the intent (e.g. TYPO_CORRECTION) and which file they are likely referring to.\n\nHere is a list of all files in the repository:\n${files.join('\n')}\n\nYou MUST select a file_path that exactly matches one of the paths in the provided repository tree.\n\nRespond in JSON format strictly matching this schema: { "intent": "string", "confidence": number, "file_path": "string", "instructions": "string" }. CRITICAL: Escape any quotation marks inside strings.`;
+        const prompt = `You are an AI maintainer. The user reported an issue:\nTitle: ${issue.title}\nBody: ${issue.body}\n\nDetermine the intent (e.g. TYPO_CORRECTION) and which file they are likely referring to.\n\nHere is a list of all files in the repository:\n${filesString}\n\nYou MUST select a file_path that exactly matches one of the paths in the provided repository tree.\n\nRespond in JSON format strictly matching this schema: { "intent": "string", "confidence": number, "file_path": "string", "instructions": "string" }. CRITICAL: Escape any quotation marks inside strings.`;
         
         const completion = await ai.chat.completions.create({
           model: "gpt-4o-mini",
