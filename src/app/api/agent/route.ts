@@ -3,7 +3,16 @@ import { Octokit } from "@octokit/rest";
 import OpenAI from "openai";
 
 export async function POST(req: NextRequest) {
-  const { url } = await req.json();
+  let body: { url?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const { url } = body;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -58,11 +67,12 @@ export async function POST(req: NextRequest) {
           owner, repo, tree_sha: upstreamRepoData.default_branch, recursive: "true"
         });
         
-        let files = treeData.tree
-          .filter((t: any) => t.type === 'blob')
-          .map((t: any) => t.path)
-          .filter((path: string) => !path.match(/\.(png|jpg|jpeg|gif|svg|ico|mp4|webp|lock|csv|jsonl|pdf|ttf|woff|woff2)$/i))
-          .filter((path: string) => !path.includes("node_modules/") && !path.includes("vendor/") && !path.includes("dist/") && !path.includes("build/") && !path.includes(".next/"));
+        const treeEntries = treeData.tree as Array<{ type?: string; path?: string }>;
+        let files = treeEntries
+          .filter((t) => t.type === 'blob' && t.path)
+          .map((t) => t.path as string)
+          .filter((path) => !path.match(/\.(png|jpg|jpeg|gif|svg|ico|mp4|webp|lock|csv|jsonl|pdf|ttf|woff|woff2)$/i))
+          .filter((path) => !path.includes("node_modules/") && !path.includes("vendor/") && !path.includes("dist/") && !path.includes("build/") && !path.includes(".next/"));
         
         // GitHub Models free tier has an 8k token limit (~30k characters)
         let filesString = files.join('\n');
@@ -116,8 +126,9 @@ export async function POST(req: NextRequest) {
             path: filePath,
           });
           fileData = response.data;
-        } catch (e: any) {
-          if (e.status === 404 || (e.message && e.message.includes('Not Found'))) {
+        } catch (e: unknown) {
+          const err = e as { status?: number; message?: string };
+          if (err.status === 404 || (err.message && err.message.includes('Not Found'))) {
              throw new Error(`File '${filePath}' was not found in the repository. Please verify the AI suggested a valid file.`);
           }
           throw e;
@@ -143,12 +154,7 @@ export async function POST(req: NextRequest) {
         
         let newContent = fixCompletion.choices[0].message.content || "";
         
-        if (newContent.startsWith("\`\`\`")) {
-            const lines = newContent.split('\n');
-            if (lines.length > 1) {
-                newContent = lines.slice(1, -1).join('\n');
-            }
-        }
+        newContent = newContent.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim();
 
         sendLog("success", "Changes generated successfully.");
         sendLog("action", "Creating new branch and committing changes...");
@@ -204,8 +210,9 @@ export async function POST(req: NextRequest) {
         sendLog("info", `PR URL: ${pr.html_url}`);
 
         controller.close();
-      } catch (error: any) {
-        sendLog("error", `Error: ${error.message}`);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        sendLog("error", `Error: ${message}`);
         controller.close();
       }
     }
