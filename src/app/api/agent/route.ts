@@ -96,20 +96,39 @@ export async function POST(req: NextRequest) {
           throw new Error("Could not determine a specific file to fix from the issue.");
         }
 
-        sendLog("action", `Fetching file content for ${analysis.file_path}...`);
-        
-        const { data: fileData } = await octokit.rest.repos.getContent({
-          owner,
-          repo,
-          path: analysis.file_path,
-        });
+        let filePath = analysis.file_path;
+        // Clean up any accidental leading slash
+        if (filePath.startsWith('/')) {
+            filePath = filePath.substring(1);
+        }
 
-        if (!("content" in fileData) || Array.isArray(fileData)) {
+        if (!files.includes(filePath)) {
+          throw new Error(`The AI suggested a file that does not exist in the repository tree: ${filePath}`);
+        }
+
+        sendLog("action", `Fetching file content for ${filePath}...`);
+        
+        let fileData;
+        try {
+          const response = await octokit.rest.repos.getContent({
+            owner,
+            repo,
+            path: filePath,
+          });
+          fileData = response.data;
+        } catch (e: any) {
+          if (e.status === 404 || (e.message && e.message.includes('Not Found'))) {
+             throw new Error(`File '${filePath}' was not found in the repository. Please verify the AI suggested a valid file.`);
+          }
+          throw e;
+        }
+
+        if (Array.isArray(fileData) || !("content" in fileData)) {
           throw new Error("Target file is a directory or too large.");
         }
 
         const fileContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
-        sendLog("success", `File ${analysis.file_path} loaded successfully.`);
+        sendLog("success", `File ${filePath} loaded successfully.`);
         sendLog("action", "Generating AST transformations and applying fixes...");
 
         const fixPrompt = `You are fixing code. Based on these instructions: "${analysis.instructions}", modify the following file content. Output ONLY the raw modified file content, with no markdown code blocks, no explanations.\n\nFile:\n${fileContent}`;
@@ -163,7 +182,7 @@ export async function POST(req: NextRequest) {
 
         await octokit.rest.repos.createOrUpdateFileContents({
           owner: targetOwner, repo,
-          path: analysis.file_path,
+          path: filePath,
           message: `Fix issue #${issueNumber}: ${analysis.intent}`,
           content: Buffer.from(newContent).toString('base64'),
           sha: fileData.sha,
