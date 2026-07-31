@@ -39,17 +39,22 @@ export async function POST(req: NextRequest) {
         const [, owner, repo, issueNumber] = match;
 
         sendLog("info", `Parsed URL: Owner=${owner}, Repo=${repo}, Issue=${issueNumber}`);
-        sendLog("action", "Initializing GitHub Octokit & GitHub Models client...");
+        const nvidiaKey = process.env.NVIDIA_API_KEY || process.env.NEMOTRON_API_KEY;
+        const isNvidia = !!(nvidiaKey && !nvidiaKey.includes("your-free-key"));
+
+        const baseURL = isNvidia ? "https://integrate.api.nvidia.com/v1" : "https://models.inference.ai.azure.com";
+        const apiKey = isNvidia ? nvidiaKey.trim() : (process.env.GITHUB_TOKEN || "");
+        const modelName = isNvidia ? (process.env.NVIDIA_MODEL || "nvidia/llama-3.1-nemotron-70b-instruct") : "gpt-4o-mini";
+
+        sendLog("action", isNvidia ? `Initializing NVIDIA NIM Client (${modelName})...` : "Initializing GitHub Octokit & GitHub Models client...");
 
         if (!process.env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is missing in environment variables.");
 
         const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
         
-        // We use the OpenAI SDK but point it to GitHub Models!
-        // This is 100% free for GitHub users and uses your existing GITHUB_TOKEN!
         const ai = new OpenAI({
-          baseURL: "https://models.inference.ai.azure.com",
-          apiKey: process.env.GITHUB_TOKEN
+          baseURL,
+          apiKey
         });
 
         sendLog("info", "Fetching issue details from GitHub...");
@@ -74,7 +79,7 @@ export async function POST(req: NextRequest) {
           .filter((path) => !path.match(/\.(png|jpg|jpeg|gif|svg|ico|mp4|webp|lock|csv|jsonl|pdf|ttf|woff|woff2)$/i))
           .filter((path) => !path.includes("node_modules/") && !path.includes("vendor/") && !path.includes("dist/") && !path.includes("build/") && !path.includes(".next/"));
         
-        // GitHub Models free tier has an 8k token limit (~30k characters)
+        // Context token truncation limit
         let filesString = files.join('\n');
         if (filesString.length > 25000) {
             filesString = filesString.substring(0, 25000) + "\n... (list truncated to fit limits)";
@@ -82,13 +87,13 @@ export async function POST(req: NextRequest) {
 
         sendLog("success", `Filtered down to ${files.length} relevant files for context.`);
 
-        sendLog("action", "Analyzing semantic intent of issue body via GPT-4o-mini...");
+        sendLog("action", `Analyzing semantic intent of issue body via ${modelName}...`);
 
         const prompt = `You are an AI maintainer. The user reported an issue:\nTitle: ${issue.title}\nBody: ${issue.body}\n\nDetermine the intent (e.g. TYPO_CORRECTION) and which file they are likely referring to.\n\nHere is a list of all files in the repository:\n${filesString}\n\nYou MUST select a file_path that exactly matches one of the paths in the provided repository tree.\n\nRespond in JSON format strictly matching this schema: { "intent": "string", "confidence": number, "file_path": "string", "instructions": "string" }. CRITICAL: Escape any quotation marks inside strings.`;
         
         const completion = await ai.chat.completions.create({
-          model: "gpt-4o-mini",
-          response_format: { type: "json_object" },
+          model: modelName,
+          ...(isNvidia ? {} : { response_format: { type: "json_object" } }),
           messages: [
             { role: "system", content: "You are an AI maintainer. Respond only with valid JSON." },
             { role: "user", content: prompt }
@@ -145,7 +150,7 @@ export async function POST(req: NextRequest) {
         const fixPrompt = `You are fixing code. Based on these instructions: "${analysis.instructions}", modify the following file content. Output ONLY the raw modified file content, with no markdown code blocks, no explanations.\n\nFile:\n${fileContent}`;
         
         const fixCompletion = await ai.chat.completions.create({
-          model: "gpt-4o-mini",
+          model: modelName,
           messages: [
             { role: "system", content: "You are an expert developer fixing a bug. Return ONLY the raw modified file content, no markdown, no explanations." },
             { role: "user", content: fixPrompt }
