@@ -68,49 +68,76 @@ export async function POST(req: NextRequest) {
         sendLog("action", hasNvidiaKey ? `Initializing NVIDIA NIM Client (${nvidiaModel})...` : "Initializing AI inference engine (Google Gemini 1.5 Flash)...");
 
         const safeGenerateText = async (prompt: string, isJson = false): Promise<string> => {
+          // 1. Try NVIDIA NIM first if key present with model fallbacks
           if (hasNvidiaKey) {
+            const nvidiaModels = [
+              nvidiaModel,
+              "meta/llama-3.3-70b-instruct",
+              "meta/llama-3.1-8b-instruct",
+              "nvidia/llama-3.1-nemotron-70b-instruct"
+            ];
+            for (const modelName of nvidiaModels) {
+              try {
+                const nvidiaAi = new OpenAI({
+                  baseURL: "https://integrate.api.nvidia.com/v1",
+                  apiKey: nvidiaKey.trim(),
+                  timeout: 45000,
+                });
+                const res = await nvidiaAi.chat.completions.create({
+                  model: modelName,
+                  messages: [{ role: "user", content: prompt }],
+                });
+                const text = res.choices[0]?.message?.content;
+                if (text) return text;
+              } catch (err: any) {
+                sendLog("info", `NVIDIA NIM (${modelName}) failed (${err?.message || err}). Trying next model/provider...`);
+              }
+            }
+          }
+
+          // 2. Try Native Google Gemini SDK with fallback model names
+          if (geminiKey) {
+            const geminiModels = [
+              "gemini-2.5-flash",
+              "gemini-2.0-flash",
+              "gemini-1.5-flash-latest",
+              "gemini-1.5-pro",
+              "gemini-1.5-flash"
+            ];
+            const genAI = new GoogleGenerativeAI(geminiKey.trim());
+            for (const modelName of geminiModels) {
+              try {
+                const model = genAI.getGenerativeModel({
+                  model: modelName,
+                  ...(isJson ? { generationConfig: { responseMimeType: "application/json" } } : {}),
+                });
+                const result = await model.generateContent(prompt);
+                const text = result.response.text();
+                if (text) return text;
+              } catch (err: any) {
+                sendLog("info", `Gemini model ${modelName} failed (${err?.message || err}). Trying next model...`);
+              }
+            }
+          }
+
+          // 3. Try GitHub Models with fallback model names
+          const ghModels = ["gpt-4o-mini", "gpt-4o", "Meta-Llama-3.1-70B-Instruct"];
+          for (const ghModel of ghModels) {
             try {
-              const nvidiaAi = new OpenAI({ baseURL: "https://integrate.api.nvidia.com/v1", apiKey: nvidiaKey.trim() });
-              const res = await nvidiaAi.chat.completions.create({
-                model: nvidiaModel,
+              const ghAi = new OpenAI({ baseURL: "https://models.inference.ai.azure.com", apiKey: process.env.GITHUB_TOKEN });
+              const res = await ghAi.chat.completions.create({
+                model: ghModel,
+                ...(isJson ? { response_format: { type: "json_object" } } : {}),
                 messages: [{ role: "user", content: prompt }],
               });
               const text = res.choices[0]?.message?.content;
               if (text) return text;
             } catch (err: any) {
-              sendLog("info", `NVIDIA NIM (${nvidiaModel}) failed (${err?.message || err}). Falling back to Google Gemini...`);
+              sendLog("info", `GitHub Models (${ghModel}) failed (${err?.message || err}).`);
             }
           }
 
-          if (geminiKey) {
-            try {
-              const genAI = new GoogleGenerativeAI(geminiKey.trim());
-              const model = genAI.getGenerativeModel({
-                model: "gemini-1.5-flash",
-                ...(isJson ? { generationConfig: { responseMimeType: "application/json" } } : {}),
-              });
-              const result = await model.generateContent(prompt);
-              const text = result.response.text();
-              if (text) return text;
-            } catch (err: any) {
-              sendLog("info", `Gemini SDK call failed (${err?.message || err}). Trying GitHub Models...`);
-            }
-          }
-
-          try {
-            const ghAi = new OpenAI({ baseURL: "https://models.inference.ai.azure.com", apiKey: process.env.GITHUB_TOKEN });
-            const res = await ghAi.chat.completions.create({
-              model: "gpt-4o-mini",
-              ...(isJson ? { response_format: { type: "json_object" } } : {}),
-              messages: [{ role: "user", content: prompt }],
-            });
-            const text = res.choices[0]?.message?.content;
-            if (text) return text;
-          } catch (err: any) {
-            sendLog("info", `GitHub Models failed (${err?.message || err}).`);
-          }
-
-          throw new Error("All AI inference providers failed. Check API keys in .env.local.");
+          throw new Error("All AI inference providers failed. Check API keys and network connectivity in .env.local.");
         };
 
         // Fetch Issue or PR Details
