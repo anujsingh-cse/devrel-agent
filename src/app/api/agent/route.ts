@@ -282,6 +282,8 @@ Rules:
 - Never hardcode tool names when tool registration is dynamic.
 - Never leave stale log messages.
 - Preserve backwards compatibility unless explicitly instructed otherwise.
+- Preserve exact type hints, import structures, function signatures, and docstrings.
+- Ensure 100% linter, formatter, and type check compliance (no syntax or typing errors).
 - Do not remove unrelated comments.
 - Do not introduce dead code.
 - Follow repository conventions.
@@ -344,9 +346,12 @@ Respond in JSON format: { "passed": boolean, "audit_notes": ["string"], "verdict
         // --- PHASE 5: CI COMPLIANCE ---
         sendLog("phase", "PHASE 5: CI COMPLIANCE — Verifying linter, formatting, branch, and PR naming conventions...");
         const branchName = `fix/${isPR ? 'pr' : 'issue'}-${targetNumber}-${Date.now()}`;
-        const prTitle = `Fix: ${itemTitle}`;
+        let prTitle = itemTitle.trim().replace(/^Fix:\s*/i, '');
+        if (!/^(fix|feat|chore|docs|refactor|test|style|ci|perf)(\(.*\))?:/i.test(prTitle)) {
+          prTitle = `fix: ${prTitle}`;
+        }
         const commitMessage = `fix: resolve maintainer review feedback for #${targetNumber}`;
-        sendLog("success", `Phase 5 Complete: Conventions validated. Branch: ${branchName} | Commit: "${commitMessage}"`);
+        sendLog("success", `Phase 5 Complete: Conventions validated. Branch: ${branchName} | PR Title: "${prTitle}" | Commit: "${commitMessage}"`);
 
         // --- PHASE 6: MAINTAINER SATISFACTION CHECK ---
         sendLog("phase", "PHASE 6: MAINTAINER SATISFACTION CHECK — Building evidence matrix...");
