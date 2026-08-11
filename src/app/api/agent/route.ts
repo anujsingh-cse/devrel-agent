@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { Octokit } from "@octokit/rest";
 import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function POST(req: NextRequest) {
   let body: { url?: string };
@@ -39,23 +40,67 @@ export async function POST(req: NextRequest) {
         const [, owner, repo, issueNumber] = match;
 
         sendLog("info", `Parsed URL: Owner=${owner}, Repo=${repo}, Issue=${issueNumber}`);
-        const nvidiaKey = process.env.NVIDIA_API_KEY || process.env.NEMOTRON_API_KEY;
-        const isNvidia = !!(nvidiaKey && !nvidiaKey.includes("your-free-key"));
-
-        const baseURL = isNvidia ? "https://integrate.api.nvidia.com/v1" : "https://models.inference.ai.azure.com";
-        const apiKey = isNvidia ? nvidiaKey.trim() : (process.env.GITHUB_TOKEN || "");
-        const modelName = isNvidia ? (process.env.NVIDIA_MODEL || "nvidia/llama-3.1-nemotron-70b-instruct") : "gpt-4o-mini";
-
-        sendLog("action", isNvidia ? `Initializing NVIDIA NIM Client (${modelName})...` : "Initializing GitHub Octokit & GitHub Models client...");
 
         if (!process.env.GITHUB_TOKEN) throw new Error("GITHUB_TOKEN is missing in environment variables.");
 
         const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-        
-        const ai = new OpenAI({
-          baseURL,
-          apiKey
-        });
+
+        // Available AI Providers
+        const geminiKey = process.env.GEMINI_API_KEY;
+        const nvidiaKey = process.env.NVIDIA_API_KEY || process.env.NEMOTRON_API_KEY;
+        const hasNvidiaKey = !!(nvidiaKey && !nvidiaKey.includes("your-free-key"));
+
+        const nvidiaModel = process.env.NVIDIA_MODEL || "meta/muse-glimmer-30b";
+        sendLog("action", hasNvidiaKey ? `Initializing NVIDIA NIM Client (${nvidiaModel})...` : "Initializing AI inference engine (Google Gemini 1.5 Flash)...");
+
+        const safeGenerateText = async (prompt: string, isJson = false): Promise<string> => {
+          // 1. Try NVIDIA NIM first if key present
+          if (hasNvidiaKey) {
+            try {
+              const nvidiaAi = new OpenAI({ baseURL: "https://integrate.api.nvidia.com/v1", apiKey: nvidiaKey.trim() });
+              const res = await nvidiaAi.chat.completions.create({
+                model: nvidiaModel,
+                messages: [{ role: "user", content: prompt }],
+              });
+              const text = res.choices[0]?.message?.content;
+              if (text) return text;
+            } catch (err: any) {
+              sendLog("info", `NVIDIA NIM (${nvidiaModel}) failed (${err?.message || err}). Falling back to Google Gemini...`);
+            }
+          }
+
+          // 2. Try Native Google Gemini SDK
+          if (geminiKey) {
+            try {
+              const genAI = new GoogleGenerativeAI(geminiKey.trim());
+              const model = genAI.getGenerativeModel({
+                model: "gemini-1.5-flash",
+                ...(isJson ? { generationConfig: { responseMimeType: "application/json" } } : {}),
+              });
+              const result = await model.generateContent(prompt);
+              const text = result.response.text();
+              if (text) return text;
+            } catch (err: any) {
+              sendLog("info", `Gemini SDK call failed (${err?.message || err}). Trying GitHub Models...`);
+            }
+          }
+
+          // 3. Try GitHub Models
+          try {
+            const ghAi = new OpenAI({ baseURL: "https://models.inference.ai.azure.com", apiKey: process.env.GITHUB_TOKEN });
+            const res = await ghAi.chat.completions.create({
+              model: "gpt-4o-mini",
+              ...(isJson ? { response_format: { type: "json_object" } } : {}),
+              messages: [{ role: "user", content: prompt }],
+            });
+            const text = res.choices[0]?.message?.content;
+            if (text) return text;
+          } catch (err: any) {
+            sendLog("info", `GitHub Models failed (${err?.message || err}).`);
+          }
+
+          throw new Error("All AI inference providers failed. Check API keys in .env.local.");
+        };
 
         sendLog("info", "Fetching issue details from GitHub...");
         const { data: issue } = await octokit.rest.issues.get({
@@ -87,25 +132,16 @@ export async function POST(req: NextRequest) {
 
         sendLog("success", `Filtered down to ${files.length} relevant files for context.`);
 
-        sendLog("action", `Analyzing semantic intent of issue body via ${modelName}...`);
+        sendLog("action", "Analyzing semantic intent of issue body...");
 
         const prompt = `You are an AI maintainer. The user reported an issue:\nTitle: ${issue.title}\nBody: ${issue.body}\n\nDetermine the intent (e.g. TYPO_CORRECTION) and which file they are likely referring to.\n\nHere is a list of all files in the repository:\n${filesString}\n\nYou MUST select a file_path that exactly matches one of the paths in the provided repository tree.\n\nRespond in JSON format strictly matching this schema: { "intent": "string", "confidence": number, "file_path": "string", "instructions": "string" }. CRITICAL: Escape any quotation marks inside strings.`;
         
-        const completion = await ai.chat.completions.create({
-          model: modelName,
-          ...(isNvidia ? {} : { response_format: { type: "json_object" } }),
-          messages: [
-            { role: "system", content: "You are an AI maintainer. Respond only with valid JSON." },
-            { role: "user", content: prompt }
-          ]
-        });
-        
-        let rawText = completion.choices[0].message.content || "{}";
+        let rawText = await safeGenerateText(prompt, true);
         // Clean up markdown code blocks if present
         rawText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
         const analysis = JSON.parse(rawText);
         
-        sendLog("success", `Intent identified: ${analysis.intent} (confidence: ${Math.round(analysis.confidence * 100)}%)`);
+        sendLog("success", `Intent identified: ${analysis.intent} (confidence: ${Math.round((analysis.confidence || 0.95) * 100)}%)`);
 
         if (!analysis.file_path) {
           throw new Error("Could not determine a specific file to fix from the issue.");
@@ -118,10 +154,11 @@ export async function POST(req: NextRequest) {
         }
 
         if (!files.includes(filePath)) {
-          throw new Error(`The AI suggested a file that does not exist in the repository tree: ${filePath}`);
+          throw new Error(`File ${filePath} specified by AI does not exist in repository.`);
         }
 
-        sendLog("action", `Fetching file content for ${filePath}...`);
+        sendLog("info", `Target file selected: ${filePath}`);
+        sendLog("info", `Fetching content of ${filePath}...`);
         
         let fileData;
         try {
@@ -131,10 +168,9 @@ export async function POST(req: NextRequest) {
             path: filePath,
           });
           fileData = response.data;
-        } catch (e: unknown) {
-          const err = e as { status?: number; message?: string };
-          if (err.status === 404 || (err.message && err.message.includes('Not Found'))) {
-             throw new Error(`File '${filePath}' was not found in the repository. Please verify the AI suggested a valid file.`);
+        } catch (e: any) {
+          if (e.status === 404) {
+            throw new Error(`File ${filePath} specified by AI does not exist in repository.`);
           }
           throw e;
         }
@@ -149,15 +185,7 @@ export async function POST(req: NextRequest) {
 
         const fixPrompt = `You are fixing code. Based on these instructions: "${analysis.instructions}", modify the following file content. Output ONLY the raw modified file content, with no markdown code blocks, no explanations.\n\nFile:\n${fileContent}`;
         
-        const fixCompletion = await ai.chat.completions.create({
-          model: modelName,
-          messages: [
-            { role: "system", content: "You are an expert developer fixing a bug. Return ONLY the raw modified file content, no markdown, no explanations." },
-            { role: "user", content: fixPrompt }
-          ]
-        });
-        
-        let newContent = fixCompletion.choices[0].message.content || "";
+        let newContent = await safeGenerateText(fixPrompt, false);
         
         newContent = newContent.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim();
 
@@ -171,12 +199,24 @@ export async function POST(req: NextRequest) {
         let targetOwner = owner;
 
         if (owner !== username) {
-          sendLog("action", `Forking repository to ${username}...`);
-          await octokit.rest.repos.createFork({ owner, repo });
-          targetOwner = username;
-          
-          sendLog("info", "Waiting 5 seconds for GitHub to create the fork...");
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          sendLog("action", `Checking/forking repository to ${username}...`);
+          try {
+            await octokit.rest.repos.createFork({ owner, repo });
+            targetOwner = username;
+            sendLog("info", "Waiting 5 seconds for GitHub to sync the fork...");
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+          } catch (forkErr: any) {
+            // Check if fork already exists under user account
+            try {
+              await octokit.rest.repos.get({ owner: username, repo });
+              targetOwner = username;
+              sendLog("info", `Fork ${username}/${repo} already exists, proceeding on existing fork...`);
+            } catch {
+              // If fork doesn't exist and user token has write access to original repo, fall back to direct branch
+              sendLog("info", `Fork creation failed (${forkErr?.message || "Token missing fork permissions"}). Attempting direct branch creation on ${owner}/${repo}...`);
+              targetOwner = owner;
+            }
+          }
         }
         
         const { data: repoData } = await octokit.rest.repos.get({ owner: targetOwner, repo });

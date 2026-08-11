@@ -1,30 +1,90 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #FAFAFA;
+  --foreground: #0F172A;
+  --muted: #F1F5F9;
+  --muted-foreground: #64748B;
+  --accent: #0052FF;
+  --accent-secondary: #4D7CFF;
+  --accent-foreground: #FFFFFF;
+  --border: #E2E8F0;
+  --card: #FFFFFF;
+  --ring: #0052FF;
 }
 
-@theme inline {
+@theme {
+  --font-serif: var(--font-calistoga), Georgia, serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), monospace;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-secondary: var(--accent-secondary);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-card: var(--card);
+  --color-ring: var(--ring);
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+  font-family: var(--font-sans);
+}
+
+/* Gradient Utilities */
+.gradient-text {
+  background: linear-gradient(135deg, #0052FF 0%, #4D7CFF 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gradient-bg {
+  background: linear-gradient(135deg, #0052FF 0%, #4D7CFF 100%);
+}
+
+.gradient-border-card {
+  position: relative;
+  border-radius: 0.75rem;
+  background: linear-gradient(135deg, #0052FF, #4D7CFF, #0052FF);
+  padding: 2px;
+}
+
+.gradient-border-card-inner {
+  border-radius: calc(0.75rem - 2px);
+  background-color: var(--card);
+  height: 100%;
+  width: 100%;
+}
+
+/* Textures & Shadows */
+.shadow-accent {
+  box-shadow: 0 4px 14px rgba(0, 82, 255, 0.25);
+}
+
+.shadow-accent-lg {
+  box-shadow: 0 8px 24px rgba(0, 82, 255, 0.35);
+}
+
+.dot-pattern-dark {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.dot-pattern-light {
+  background-image: radial-gradient(circle, rgba(15, 23, 42, 0.06) 1px, transparent 1px);
+  background-size: 32px 32px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-pulse { animation: none !important; }
+  .animate-pulse,
+  .animate-bounce,
+  .animate-spin {
+    animation: none !important;
+  }
 }
