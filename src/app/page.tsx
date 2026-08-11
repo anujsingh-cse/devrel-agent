@@ -42,7 +42,13 @@ const stagger = {
 export default function DevRelAgent() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [issueUrl, setIssueUrl] = useState("");
+  const [agentMode, setAgentMode] = useState<"elite_pr_contributor" | "issue_fix">("elite_pr_contributor");
+  const [reviewComments, setReviewComments] = useState("");
+  const [ciLogs, setCiLogs] = useState("");
+  const [showAdvancedInputs, setShowAdvancedInputs] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [finalResult, setFinalResult] = useState<any>(null);
+
   const abortRef = useRef<AbortController | null>(null);
   const logIdRef = useRef(0);
 
@@ -56,6 +62,7 @@ export default function DevRelAgent() {
   const runAgent = useCallback(async () => {
     if (!issueUrl || isRunning) return;
     setLogs([]);
+    setFinalResult(null);
     setIsRunning(true);
 
     const controller = new AbortController();
@@ -65,7 +72,12 @@ export default function DevRelAgent() {
       const response = await fetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: issueUrl }),
+        body: JSON.stringify({
+          url: issueUrl,
+          mode: agentMode,
+          reviewComments,
+          ciLogs
+        }),
         signal: controller.signal,
       });
 
@@ -85,6 +97,9 @@ export default function DevRelAgent() {
             try {
               const data = JSON.parse(line.substring(6));
               const id = `log-${++logIdRef.current}`;
+              if (data.type === "result" && data.payload) {
+                setFinalResult(data.payload);
+              }
               setLogs((prev) => [...prev, { ...data, id }]);
             } catch {
               // ignore parse errors for partial chunks
@@ -108,7 +123,7 @@ export default function DevRelAgent() {
       setIsRunning(false);
       abortRef.current = null;
     }
-  }, [issueUrl, isRunning]);
+  }, [issueUrl, agentMode, reviewComments, ciLogs, isRunning]);
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans relative selection:bg-accent selection:text-white">
@@ -143,7 +158,7 @@ export default function DevRelAgent() {
       </header>
 
       {/* Hero Section */}
-      <section className="relative py-20 lg:py-32 px-6 overflow-hidden">
+      <section className="relative py-16 lg:py-24 px-6 overflow-hidden">
         {/* Background Ambient Glow */}
         <div className="absolute top-10 right-10 w-96 h-96 rounded-full bg-accent/5 blur-[140px] pointer-events-none" />
 
@@ -151,75 +166,143 @@ export default function DevRelAgent() {
           initial="hidden"
           animate="visible"
           variants={stagger}
-          className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-16 items-center"
+          className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-12 items-start"
         >
-          {/* Left Column: Hero Text */}
-          <motion.div variants={fadeInUp} className="space-y-8">
-            <Badge pulse>Autonomous GitHub Maintainer</Badge>
+          {/* Left Column: Hero Text & Controls */}
+          <motion.div variants={fadeInUp} className="space-y-6">
+            <Badge pulse>Elite PR Merge Engine</Badge>
 
-            <h1 className="font-serif text-5xl sm:text-6xl lg:text-[5.25rem] leading-[1.05] tracking-tight text-foreground">
-              The AI Maintainer <br />
-              <span className="relative inline-block mt-2">
-                <span className="gradient-text">You Always Wanted.</span>
+            <h1 className="font-serif text-4xl sm:text-5xl lg:text-[4.5rem] leading-[1.05] tracking-tight text-foreground">
+              The Open-Source <br />
+              <span className="relative inline-block mt-1">
+                <span className="gradient-text">Contributor Agent.</span>
                 <span className="gradient-underline" />
               </span>
             </h1>
 
-            <p className="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
-              Stop triaging repetitive typos and dependency issues manually.
-              DevRel Agent analyzes GitHub issues, categorizes intent, and submits verified PRs automatically.
+            <p className="text-base md:text-lg text-muted-foreground leading-relaxed max-w-xl">
+              Not just solving issues—getting PRs merged. Executes a 7-phase workflow: Review Analysis, Implementation, Regression Testing, Diff Audit, CI Compliance, Satisfaction Check &amp; PR Response.
             </p>
 
-            {/* Interactive Issue URL Input Form */}
-            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 max-w-lg">
-              <Input
-                type="url"
-                placeholder="Paste GitHub Issue URL here..."
-                value={issueUrl}
-                onChange={(e) => setIssueUrl(e.target.value)}
-                aria-label="GitHub Issue URL"
-              />
-              <Button
-                onClick={runAgent}
-                disabled={isRunning || !issueUrl}
-                className="w-full sm:w-auto shrink-0"
+            {/* Mode Switcher */}
+            <div className="flex items-center gap-2 p-1.5 rounded-xl bg-muted border border-border w-fit">
+              <button
+                type="button"
+                onClick={() => setAgentMode("elite_pr_contributor")}
+                className={`px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all flex items-center gap-2 ${
+                  agentMode === "elite_pr_contributor"
+                    ? "bg-white text-foreground shadow-sm font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
               >
-                {isRunning ? (
-                  <>
-                    <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
-                    <span>Executing...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>Run Agent</span>
-                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-                  </>
+                <Sparkles className="h-4 w-4 text-accent" />
+                <span>Elite PR Contributor (7-Phase)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAgentMode("issue_fix")}
+                className={`px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all flex items-center gap-2 ${
+                  agentMode === "issue_fix"
+                    ? "bg-white text-foreground shadow-sm font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Zap className="h-4 w-4 text-amber-500" />
+                <span>Issue Auto-Fixer</span>
+              </button>
+            </div>
+
+            {/* Interactive Issue/PR URL Form */}
+            <div className="space-y-3 pt-2 max-w-xl">
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <Input
+                  type="url"
+                  placeholder={agentMode === "elite_pr_contributor" ? "Paste GitHub PR or Issue URL..." : "Paste GitHub Issue URL..."}
+                  value={issueUrl}
+                  onChange={(e) => setIssueUrl(e.target.value)}
+                  aria-label="GitHub Issue or PR URL"
+                />
+                <Button
+                  onClick={runAgent}
+                  disabled={isRunning || !issueUrl}
+                  className="w-full sm:w-auto shrink-0"
+                >
+                  {isRunning ? (
+                    <>
+                      <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
+                      <span>Executing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Execute Workflow</span>
+                      <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {/* Toggle Optional Review Inputs */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedInputs(!showAdvancedInputs)}
+                  className="text-xs text-accent font-semibold hover:underline flex items-center gap-1"
+                >
+                  {showAdvancedInputs ? "− Hide Maintainer Feedback & CI Logs" : "+ Add Maintainer Review Comments & CI Logs"}
+                </button>
+
+                {showAdvancedInputs && (
+                  <div className="mt-3 space-y-3 p-4 rounded-xl bg-slate-50 border border-border">
+                    <div>
+                      <label className="block font-mono text-xs font-semibold text-foreground mb-1">
+                        Maintainer / CodeRabbit Review Comments
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={reviewComments}
+                        onChange={(e) => setReviewComments(e.target.value)}
+                        placeholder="Paste reviewer feedback (e.g. 'Prompt should not reference missing tool', 'Fix edge case in auth middleware')..."
+                        className="w-full text-xs font-mono p-2.5 rounded-lg border border-border bg-white text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-mono text-xs font-semibold text-foreground mb-1">
+                        CI Failure Logs (Optional)
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={ciLogs}
+                        onChange={(e) => setCiLogs(e.target.value)}
+                        placeholder="Paste build/test failure log trace..."
+                        className="w-full text-xs font-mono p-2.5 rounded-lg border border-border bg-white text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+                      />
+                    </div>
+                  </div>
                 )}
-              </Button>
+              </div>
             </div>
 
             {/* Micro Stats Row */}
             <div className="flex items-center gap-8 pt-4 border-t border-border/60">
               <div>
-                <div className="font-serif text-2xl font-bold text-foreground">450+</div>
-                <div className="font-mono text-xs text-muted-foreground uppercase tracking-wider mt-0.5">Repos Monitored</div>
+                <div className="font-serif text-2xl font-bold text-foreground">7 Phases</div>
+                <div className="font-mono text-xs text-muted-foreground uppercase tracking-wider mt-0.5">Merge Pipeline</div>
               </div>
               <div className="h-8 w-px bg-border" />
               <div>
-                <div className="font-serif text-2xl font-bold text-accent">&lt; 45s</div>
-                <div className="font-mono text-xs text-muted-foreground uppercase tracking-wider mt-0.5">Average PR Time</div>
+                <div className="font-serif text-2xl font-bold text-accent">100%</div>
+                <div className="font-mono text-xs text-muted-foreground uppercase tracking-wider mt-0.5">Regression Test Target</div>
               </div>
               <div className="h-8 w-px bg-border" />
               <div>
-                <div className="font-serif text-2xl font-bold text-foreground">99.4%</div>
-                <div className="font-mono text-xs text-muted-foreground uppercase tracking-wider mt-0.5">Parse Accuracy</div>
+                <div className="font-serif text-2xl font-bold text-foreground">Zero</div>
+                <div className="font-mono text-xs text-muted-foreground uppercase tracking-wider mt-0.5">Stale Logs Allowed</div>
               </div>
             </div>
           </motion.div>
 
-          {/* Right Column: Hero Graphic / Live Execution Terminal */}
+          {/* Right Column: Live Execution Terminal */}
           <motion.div variants={fadeInUp} className="relative">
-            {/* Ambient Background Glow behind terminal */}
             <div className="absolute -inset-2 bg-gradient-to-r from-[#0052FF] to-[#4D7CFF] rounded-3xl blur-xl opacity-20" />
 
             <Card variant="dark" className="relative z-10">
@@ -232,7 +315,7 @@ export default function DevRelAgent() {
                 </div>
                 <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
                   <TerminalIcon className="h-3.5 w-3.5 text-[#0052FF]" />
-                  <span>agent-sandbox-01</span>
+                  <span>contributor-agent-v2</span>
                 </div>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono text-[10px] uppercase">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -242,7 +325,7 @@ export default function DevRelAgent() {
 
               {/* Terminal Logs Window */}
               <div
-                className="font-mono text-xs h-[340px] overflow-y-auto space-y-3 pr-2 scrollbar-thin"
+                className="font-mono text-xs h-[380px] overflow-y-auto space-y-3 pr-2 scrollbar-thin"
                 role="log"
                 aria-label="Agent execution log"
               >
@@ -250,7 +333,7 @@ export default function DevRelAgent() {
                   <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3 text-center px-4">
                     <Code2 className="h-8 w-8 text-slate-600 animate-bounce" />
                     <p className="text-slate-400 font-sans text-sm">
-                      Ready to execute. Paste a GitHub issue URL and click <strong className="text-white">Run Agent</strong>.
+                      Ready for action. Enter a PR or Issue URL and click <strong className="text-white">Execute Workflow</strong>.
                     </p>
                   </div>
                 ) : (
@@ -262,6 +345,9 @@ export default function DevRelAgent() {
                       className="flex items-start gap-2.5"
                     >
                       <span className="text-slate-500 shrink-0">[{log.time}]</span>
+                      {log.type === "phase" && (
+                        <span className="text-cyan-400 font-bold shrink-0 bg-cyan-950 px-1.5 py-0.5 rounded border border-cyan-800">PHASE</span>
+                      )}
                       {log.type === "info" && (
                         <span className="text-[#4D7CFF] font-semibold shrink-0">INFO</span>
                       )}
@@ -276,7 +362,7 @@ export default function DevRelAgent() {
                       {log.type === "error" && (
                         <span className="text-rose-400 font-semibold shrink-0">ERR</span>
                       )}
-                      <span className="text-slate-200 break-all">{log.text}</span>
+                      <span className={`break-all ${log.type === "phase" ? "text-cyan-200 font-semibold" : "text-slate-200"}`}>{log.text}</span>
                     </motion.div>
                   ))
                 )}
@@ -285,6 +371,83 @@ export default function DevRelAgent() {
           </motion.div>
         </motion.div>
       </section>
+
+      {/* Maintainer Satisfaction Check & Results Section */}
+      {finalResult && (
+        <section className="py-12 px-6 bg-slate-900 text-white border-t border-slate-800">
+          <div className="max-w-6xl mx-auto space-y-8">
+            <div className="flex items-center justify-between">
+              <div>
+                <Badge pulse={false}>Phase 6 &amp; Phase 7 Verification</Badge>
+                <h2 className="font-serif text-3xl text-white mt-2">Maintainer Satisfaction &amp; Response Matrix</h2>
+              </div>
+              {finalResult.prUrl && (
+                <a
+                  href={finalResult.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 rounded-xl gradient-bg text-white font-medium text-sm flex items-center gap-2 hover:opacity-90 transition-opacity"
+                >
+                  <span>View PR on GitHub</span>
+                  <ArrowRight className="h-4 w-4" />
+                </a>
+              )}
+            </div>
+
+            {/* Matrix Table */}
+            <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+              <table className="w-full text-left border-collapse text-xs font-mono">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 uppercase">
+                    <th className="py-3 px-4">Review Comment</th>
+                    <th className="py-3 px-4">Classification</th>
+                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4">Evidence</th>
+                    <th className="py-3 px-4">Test Coverage</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {finalResult.satisfactionMatrix?.map((row: any, i: number) => (
+                    <tr key={i} className="hover:bg-slate-900/40">
+                      <td className="py-3 px-4 text-slate-200 font-sans">{row.comment}</td>
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30">
+                          {row.classification}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-slate-300 font-sans">{row.evidence}</td>
+                      <td className="py-3 px-4 text-cyan-300">{row.testCoverage}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Generated Maintainer Response Box */}
+            <div className="p-6 rounded-xl border border-slate-800 bg-slate-950 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <span className="font-mono text-xs text-slate-400 font-semibold uppercase">Phase 7: Generated Maintainer Response</span>
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard.writeText(finalResult.prResponseText)}
+                  className="text-xs text-accent hover:underline font-mono"
+                >
+                  Copy Response Markdown
+                </button>
+              </div>
+              <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed bg-slate-900 p-4 rounded-lg border border-slate-850">
+                {finalResult.prResponseText}
+              </pre>
+            </div>
+          </div>
+        </section>
+      )}
+
 
       {/* Feature Capabilities Grid Section */}
       <section className="py-28 px-6 bg-muted/50 border-y border-border">
