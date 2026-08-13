@@ -282,6 +282,10 @@ Analyze all review comments, CI test failure tracebacks, and repository file ext
 2. Select the main code file to fix ("file_path").
 3. Select an existing relevant test file in the repository ("test_file_path") if available (e.g. matching *.test.ts, *.spec.ts, test_*.py, *_test.go).
 
+CRITICAL FILE SELECTION RULE:
+- "file_path" MUST be an actual source code file (e.g. *.ts, *.tsx, *.js, *.jsx, *.py, *.go, *.rs, etc.) or config/workflow file containing the implementation to fix.
+- DO NOT select rule files (.mdc), documentation (.md), or metadata files unless the issue explicitly asks to update documentation.
+
 CRITICAL CI FIXING RULE:
 If CI Logs indicate an "Upload coverage reports" or "upload-artifact" failure ("No files were found with the provided path: coverage packages/*/coverage"):
 - Classify this as a CI/Coverage configuration failure.
@@ -632,13 +636,35 @@ Guidelines:
                 });
 
                 totalChecks = checkData.total_count;
-                const runs = checkData.check_runs;
+                let runs = checkData.check_runs;
 
+                // GitHub Actions takes 10-30s to register check runs on a new PR head commit.
+                // If totalChecks is 0, enter a grace-period retry loop before assuming no CI checks exist.
                 if (totalChecks === 0) {
-                  sendLog("info", "No CI checks configured on this repository. Skipping monitoring.");
-                  checksComplete = true;
-                  allChecksPassed = true;
-                  break;
+                  let initialWaitAttempts = 0;
+                  const MAX_INITIAL_WAITS = 6; // 6 * 8s = 48s max grace period
+                  while (totalChecks === 0 && initialWaitAttempts < MAX_INITIAL_WAITS) {
+                    initialWaitAttempts++;
+                    sendLog("monitor", `⏳ Waiting for GitHub CI checks to initialize... (attempt ${initialWaitAttempts}/${MAX_INITIAL_WAITS})`);
+                    await new Promise(r => setTimeout(r, 8000));
+
+                    try {
+                      const { data: recheckData } = await octokit.rest.checks.listForRef({
+                        owner, repo, ref: headSha
+                      });
+                      totalChecks = recheckData.total_count;
+                      runs = recheckData.check_runs;
+                    } catch {
+                      // ignore temporary API errors during recheck
+                    }
+                  }
+
+                  if (totalChecks === 0) {
+                    sendLog("info", "No CI checks configured on this repository after 45s wait. Skipping monitoring.");
+                    checksComplete = true;
+                    allChecksPassed = true;
+                    break;
+                  }
                 }
 
                 const pending = runs.filter(r => r.status !== "completed");
