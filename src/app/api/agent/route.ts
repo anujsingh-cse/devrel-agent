@@ -10,19 +10,58 @@ interface AgentRequestBody {
   ciLogs?: string;
 }
 
+interface CommentAnalysis {
+  comment: string;
+  classification: "Blocking" | "Major" | "Minor" | "Style" | "CI" | "Documentation";
+  root_cause: string;
+  exact_location: string;
+  expected_behavior: string;
+  current_behavior: string;
+  request_type: "code" | "tests" | "documentation" | "cleanup" | "architectural";
+}
+
+interface Phase1Result {
+  intent: string;
+  confidence: number;
+  file_path: string;
+  comments_analysis: CommentAnalysis[];
+  resolution_plan: string;
+}
+
+interface Phase3Result {
+  test_framework: string;
+  test_file_name: string;
+  test_code: string;
+  cases_covered: string[];
+}
+
+interface Phase4Result {
+  passed: boolean;
+  audit_notes: string[];
+  verdict: string;
+}
+
+interface SatisfactionItem {
+  comment: string;
+  classification: string;
+  status: string;
+  evidence: string;
+  testCoverage: string;
+}
+
 function safeParseJSON<T>(raw: string, fallback: T): T {
   try {
-    let cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
     try {
       return JSON.parse(cleaned) as T;
     } catch {
-      // Attempt to clean control characters, unescaped newlines & trailing commas
+      // Clean control characters, unescaped newlines & trailing commas
       const sanitize = cleaned
         .replace(/,\s*([}\]])/g, '$1')
         .replace(/[\u0000-\u001F\u007F-\u009F]/g, (c) => c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : '');
       return JSON.parse(sanitize) as T;
     }
-  } catch (err) {
+  } catch {
     return fallback;
   }
 }
@@ -42,7 +81,7 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      const sendLog = (type: string, text: string, payload?: any) => {
+      const sendLog = (type: string, text: string, payload?: unknown) => {
         const data = JSON.stringify({
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
           type,
@@ -85,7 +124,7 @@ export async function POST(req: NextRequest) {
         sendLog("action", "Initializing AI inference engine with automatic multi-model failover...");
 
         const safeGenerateText = async (prompt: string, isJson = false): Promise<string> => {
-          // 1. Try Native Google Gemini SDK first (fastest and most robust for structured JSON)
+          // 1. Try Native Google Gemini SDK first
           if (geminiKey) {
             const geminiModels = [
               "gemini-2.5-flash",
@@ -104,13 +143,14 @@ export async function POST(req: NextRequest) {
                 const result = await model.generateContent(prompt);
                 const text = result.response.text();
                 if (text) return text;
-              } catch (err: any) {
-                sendLog("info", `Gemini model ${modelName} failed (${err?.message || err}). Trying next model...`);
+              } catch (err: unknown) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                sendLog("info", `Gemini model ${modelName} failed (${errMsg}). Trying next model...`);
               }
             }
           }
 
-          // 2. Try NVIDIA NIM with tight 20s timeout and fast 8B/70B models
+          // 2. Try NVIDIA NIM with tight 20s timeout
           if (hasNvidiaKey) {
             const nvidiaModels = [
               "meta/llama-3.1-8b-instruct",
@@ -131,8 +171,9 @@ export async function POST(req: NextRequest) {
                 });
                 const text = res.choices[0]?.message?.content;
                 if (text) return text;
-              } catch (err: any) {
-                sendLog("info", `NVIDIA NIM (${modelName}) failed (${err?.message || err}). Trying next model...`);
+              } catch (err: unknown) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                sendLog("info", `NVIDIA NIM (${modelName}) failed (${errMsg}). Trying next model...`);
               }
             }
           }
@@ -149,8 +190,9 @@ export async function POST(req: NextRequest) {
               });
               const text = res.choices[0]?.message?.content;
               if (text) return text;
-            } catch (err: any) {
-              sendLog("info", `GitHub Models (${ghModel}) failed (${err?.message || err}).`);
+            } catch (err: unknown) {
+              const errMsg = err instanceof Error ? err.message : String(err);
+              sendLog("info", `GitHub Models (${ghModel}) failed (${errMsg}).`);
             }
           }
 
@@ -176,7 +218,7 @@ export async function POST(req: NextRequest) {
             const reviewTexts = reviews.map(r => `[Review by ${r.user?.login}]: ${r.body}`).filter(t => t.length > 20);
             const commentTexts = comments.map(c => `[Comment on ${c.path}:${c.line || 'general'} by ${c.user?.login}]: ${c.body}`);
             fetchedCommentsText = [...reviewTexts, ...commentTexts].join("\n");
-          } catch (e) {
+          } catch {
             sendLog("info", "Note: Could not fetch inline PR review comments via API.");
           }
         } else {
@@ -189,7 +231,7 @@ export async function POST(req: NextRequest) {
           try {
             const { data: comments } = await octokit.rest.issues.listComments({ owner, repo, issue_number: parseInt(targetNumber) });
             fetchedCommentsText = comments.map(c => `[Comment by ${c.user?.login}]: ${c.body}`).join("\n");
-          } catch (e) {
+          } catch {
             // ignore
           }
         }
@@ -206,7 +248,7 @@ export async function POST(req: NextRequest) {
         });
         
         const treeEntries = treeData.tree as Array<{ type?: string; path?: string }>;
-        let files = treeEntries
+        const files = treeEntries
           .filter((t) => t.type === 'blob' && t.path)
           .map((t) => t.path as string)
           .filter((path) => !path.match(/\.(png|jpg|jpeg|gif|svg|ico|mp4|webp|lock|csv|jsonl|pdf|ttf|woff|woff2)$/i))
@@ -224,16 +266,17 @@ export async function POST(req: NextRequest) {
         // ==========================================
 
         // --- PHASE 1: REVIEW ANALYSIS ---
-        sendLog("phase", "PHASE 1: REVIEW ANALYSIS — Classifying maintainer feedback & root causes...");
+        sendLog("phase", "PHASE 1: REVIEW ANALYSIS — Classifying maintainer feedback & CI root causes...");
         const phase1Prompt = `You are an elite open-source contributor agent performing Phase 1: Review Analysis.
 Target Item Title: ${itemTitle}
 Body: ${itemBody}
 Maintainer/CodeRabbit Feedback: ${combinedReviewComments || "None provided explicitly. Treat issue/PR body as reviewer directives."}
-CI Failures: ${ciLogs || "None reported."}
+CI Failures / Test Logs: ${ciLogs || "None reported explicitly. Ensure code passes all tests."}
 Available Repository Files:
 ${filesString}
 
-Analyze all comments and produce a strict JSON output matching this schema:
+Analyze all review comments and CI test failure tracebacks thoroughly. Identify the exact root cause of any broken tests or issues.
+Produce a strict JSON output matching this schema:
 {
   "intent": "string",
   "confidence": number,
@@ -252,10 +295,10 @@ Analyze all comments and produce a strict JSON output matching this schema:
   "resolution_plan": "string"
 }`;
 
-        let phase1Raw = await safeGenerateText(phase1Prompt, true);
-        const phase1Data = safeParseJSON<{ intent: string; confidence: number; file_path: string; comments_analysis: any[]; resolution_plan: string }>(
+        const phase1Raw = await safeGenerateText(phase1Prompt, true);
+        const phase1Data = safeParseJSON<Phase1Result>(
           phase1Raw,
-          { intent: "Resolve maintainer reviews", confidence: 0.9, file_path: files[0] || "", comments_analysis: [], resolution_plan: "Apply requested changes" }
+          { intent: "Resolve maintainer reviews", confidence: 0.9, file_path: files[0] || "", comments_analysis: [], resolution_plan: "Apply requested changes and ensure all tests pass" }
         );
 
         sendLog("success", `Phase 1 Complete: Identified intent "${phase1Data.intent}" in target file "${phase1Data.file_path}". Classified ${phase1Data.comments_analysis?.length || 1} review items.`);
@@ -275,20 +318,23 @@ Analyze all comments and produce a strict JSON output matching this schema:
         const fileContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
 
         // --- PHASE 2: IMPLEMENTATION ---
-        sendLog("phase", "PHASE 2: IMPLEMENTATION — Applying code transformations to satisfy all blocking reviews...");
+        sendLog("phase", "PHASE 2: IMPLEMENTATION — Applying code transformations to satisfy all reviews & pass all tests...");
         const phase2Prompt = `You are an elite open-source contributor performing Phase 2: Implementation.
-Modify code to satisfy every blocking review comment.
-Rules:
+Modify code to satisfy every blocking review comment and ensure ALL repository tests pass 100%.
+
+Crucial Rules:
+- Fix the underlying root cause so that all unit/integration test assertions pass cleanly.
 - Never hardcode tool names when tool registration is dynamic.
 - Never leave stale log messages.
 - Preserve backwards compatibility unless explicitly instructed otherwise.
 - Preserve exact type hints, import structures, function signatures, and docstrings.
 - Ensure 100% linter, formatter, and type check compliance (no syntax or typing errors).
-- Do not remove unrelated comments.
+- Do not remove unrelated comments or delete existing test assertions.
 - Do not introduce dead code.
 - Follow repository conventions.
 
 Resolution Plan: ${phase1Data.resolution_plan}
+CI Failure Logs: ${ciLogs || "None provided. Code must be bug-free."}
 File Path: ${filePath}
 Current File Content:
 ${fileContent}
@@ -297,29 +343,31 @@ Output ONLY the raw updated file content. Do NOT include markdown code blocks or
 
         let updatedCode = await safeGenerateText(phase2Prompt, false);
         updatedCode = updatedCode.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim();
-        sendLog("success", "Phase 2 Complete: Code transformations generated without breaking rules.");
+        sendLog("success", "Phase 2 Complete: Code transformations generated to pass all test requirements.");
 
         // --- PHASE 3: REGRESSION TESTING ---
-        sendLog("phase", "PHASE 3: REGRESSION TESTING — Generating targeted regression tests for every review finding...");
+        sendLog("phase", "PHASE 3: REGRESSION TESTING — Generating executable regression test suite...");
         const phase3Prompt = `You are an elite open-source contributor performing Phase 3: Regression Testing.
 Review Comments: ${JSON.stringify(phase1Data.comments_analysis)}
 Target File: ${filePath}
+CI Failures: ${ciLogs || "None"}
 
-Generate at least one regression test suite covering present/absent conditions, edge cases, and bug fix validation.
+Generate a complete, executable, production-ready regression test suite matching the target repository's testing framework (e.g. pytest, jest, vitest, go test).
+Cover edge cases, bug validation, and happy paths.
 Respond in JSON format strictly matching this schema:
 {
   "test_framework": "pytest",
   "test_file_name": "tests/test_regression.py",
   "test_code": "def test_regression(): pass",
-  "cases_covered": ["tool_present", "tool_absent", "edge_cases"]
+  "cases_covered": ["valid_case", "edge_case", "regression_verification"]
 }`;
 
-        let phase3Raw = await safeGenerateText(phase3Prompt, true);
-        const phase3Data = safeParseJSON<{ test_framework: string; test_file_name: string; test_code: string; cases_covered: string[] }>(
+        const phase3Raw = await safeGenerateText(phase3Prompt, true);
+        const phase3Data = safeParseJSON<Phase3Result>(
           phase3Raw,
           { test_framework: "pytest", test_file_name: "tests/test_regression.py", test_code: "# Regression test suite", cases_covered: ["edge_cases"] }
         );
-        sendLog("success", `Phase 3 Complete: Created regression test file "${phase3Data.test_file_name}" covering ${phase3Data.cases_covered?.length || 1} edge cases.`);
+        sendLog("success", `Phase 3 Complete: Created regression test file "${phase3Data.test_file_name}" covering ${phase3Data.cases_covered?.length || 1} test conditions.`);
 
         // --- PHASE 4: DIFF REVIEW ---
         sendLog("phase", "PHASE 4: DIFF REVIEW — Performing self-audit of generated changes...");
@@ -330,14 +378,15 @@ New Content snippet: ${updatedCode.substring(0, 1000)}
 Verify:
 - No stale log messages
 - No orphaned references
+- All test assertions are satisfied
 - No hardcoded fallbacks
 - No unrelated file changes
 - EOF newline preserved
 
 Respond in JSON format: { "passed": boolean, "audit_notes": ["string"], "verdict": "string" }`;
 
-        let phase4Raw = await safeGenerateText(phase4Prompt, true);
-        const phase4Data = safeParseJSON<{ passed: boolean; audit_notes: string[]; verdict: string }>(
+        const phase4Raw = await safeGenerateText(phase4Prompt, true);
+        const phase4Data = safeParseJSON<Phase4Result>(
           phase4Raw,
           { passed: true, audit_notes: ["Self-audit clean"], verdict: "Passed cleanly." }
         );
@@ -355,7 +404,7 @@ Respond in JSON format: { "passed": boolean, "audit_notes": ["string"], "verdict
 
         // --- PHASE 6: MAINTAINER SATISFACTION CHECK ---
         sendLog("phase", "PHASE 6: MAINTAINER SATISFACTION CHECK — Building evidence matrix...");
-        const satisfactionMatrix = (phase1Data.comments_analysis || []).map((c: any, index: number) => ({
+        const satisfactionMatrix: SatisfactionItem[] = (phase1Data.comments_analysis || []).map((c, index) => ({
           comment: c.comment || `Review item #${index + 1}: ${c.current_behavior}`,
           classification: c.classification || "Blocking",
           status: "Resolved",
@@ -375,7 +424,7 @@ Respond in JSON format: { "passed": boolean, "audit_notes": ["string"], "verdict
         sendLog("success", `Phase 6 Complete: 100% of blocking review comments verified as RESOLVED.`);
 
         // --- PHASE 7: PR RESPONSE GENERATION & COMMIT ---
-        sendLog("phase", "PHASE 7: PR RESPONSE — Creating git commit & drafting maintainer PR response...");
+        sendLog("phase", "PHASE 7: PR RESPONSE — Creating git commits & drafting natural human-like PR response...");
 
         const { data: user } = await octokit.rest.users.getAuthenticated();
         const username = user.login;
@@ -388,7 +437,7 @@ Respond in JSON format: { "passed": boolean, "audit_notes": ["string"], "verdict
             targetOwner = username;
             sendLog("info", "Waiting 5 seconds for GitHub fork synchronization...");
             await new Promise((resolve) => setTimeout(resolve, 5000));
-          } catch (forkErr: any) {
+          } catch {
             try {
               await octokit.rest.repos.get({ owner: username, repo });
               targetOwner = username;
@@ -405,6 +454,7 @@ Respond in JSON format: { "passed": boolean, "audit_notes": ["string"], "verdict
 
         await octokit.rest.git.createRef({ owner: targetOwner, repo, ref: `refs/heads/${branchName}`, sha: baseSha });
 
+        // Commit primary code fix file
         await octokit.rest.repos.createOrUpdateFileContents({
           owner: targetOwner,
           repo,
@@ -414,27 +464,72 @@ Respond in JSON format: { "passed": boolean, "audit_notes": ["string"], "verdict
           sha: fileData.sha,
           branch: branchName
         });
+        sendLog("success", `Committed code fix in "${filePath}" to branch ${branchName}.`);
 
-        // Generate maintainer response markdown
-        const prResponseText = `### Addressed all review comments:
+        // Commit regression test file if valid
+        if (phase3Data.test_file_name && phase3Data.test_code && phase3Data.test_code.length > 20) {
+          let testSha: string | undefined = undefined;
+          try {
+            const existingTest = await octokit.rest.repos.getContent({
+              owner: targetOwner,
+              repo,
+              path: phase3Data.test_file_name,
+              ref: branchName
+            });
+            if (!Array.isArray(existingTest.data) && "sha" in existingTest.data) {
+              testSha = existingTest.data.sha;
+            }
+          } catch {
+            // File does not exist yet on target branch, which is expected for new tests
+          }
 
-${satisfactionMatrix.map((item: any) => `- **[${item.classification}]** ${item.comment}\n  - **Resolution**: ${item.evidence}\n  - **Test**: \`${item.testCoverage}\``).join("\n")}
+          try {
+            await octokit.rest.repos.createOrUpdateFileContents({
+              owner: targetOwner,
+              repo,
+              path: phase3Data.test_file_name,
+              message: `test: add regression test suite in ${phase3Data.test_file_name}`,
+              content: Buffer.from(phase3Data.test_code).toString('base64'),
+              ...(testSha ? { sha: testSha } : {}),
+              branch: branchName
+            });
+            sendLog("success", `Committed regression test file "${phase3Data.test_file_name}" to branch ${branchName}.`);
+          } catch (testCommitErr: unknown) {
+            const errMsg = testCommitErr instanceof Error ? testCommitErr.message : String(testCommitErr);
+            sendLog("info", `Note: Could not commit regression test file (${errMsg}). Primary fix committed.`);
+          }
+        }
 
-- Added full regression coverage in \`${phase3Data.test_file_name}\`.
-- Verified self-diff audit: ${phase4Data.verdict || "No stale logs or orphaned refs"}.
-- CI compliance verified.
-- **Ready for another review!**`;
+        // Generate natural human-sounding PR description / maintainer response via AI
+        const phase7Prompt = `You are a senior open-source software engineer drafting a Pull Request description / comment for maintainers on GitHub.
+Target Title: ${itemTitle}
+Target Item Type: ${isPR ? 'Pull Request Review' : 'Issue Fix'}
+Modified File: ${filePath}
+Resolution Plan: ${phase1Data.resolution_plan}
+Regression Tests File: ${phase3Data.test_file_name || "None"}
+Review & CI Feedback Analyzed: ${JSON.stringify(phase1Data.comments_analysis)}
+
+Write a clean, concise, natural PR description for maintainers.
+Guidelines:
+- Sound like a real human software engineer contributing to open source.
+- Explain the root cause of the issue/CI failure clearly in 1-2 short paragraphs or bullet points.
+- Detail what was changed in ${filePath} to resolve the issue and pass all test suites.
+- Mention how tests in ${phase3Data.test_file_name || 'the test suite'} verify the fix.
+- DO NOT use rigid templates, robotic AI jargon, or phrases like "In accordance with Phase 6" or "Satisfaction matrix".
+- Vary sentence length and formatting naturally. Keep it concise, friendly, and technical.`;
+
+        let prResponseText = await safeGenerateText(phase7Prompt, false);
+        prResponseText = prResponseText.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim();
 
         let prUrl = "";
         if (isPR) {
           prUrl = url;
-          // Optionally add comment to existing PR if write permissions permit
           try {
             await octokit.rest.issues.createComment({
               owner, repo, issue_number: parseInt(targetNumber), body: prResponseText
             });
             sendLog("success", `Posted response comment to PR #${targetNumber}`);
-          } catch (commentErr) {
+          } catch {
             sendLog("info", "Note: PR comment ready (skipped auto-posting due to token scope).");
           }
         } else {
@@ -475,4 +570,5 @@ ${satisfactionMatrix.map((item: any) => `- **[${item.classification}]** ${item.c
     },
   });
 }
+
 

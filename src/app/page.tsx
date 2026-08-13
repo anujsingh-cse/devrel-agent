@@ -39,6 +39,31 @@ const stagger = {
   visible: { transition: { staggerChildren: 0.12, delayChildren: 0.1 } },
 };
 
+interface SatisfactionItem {
+  comment: string;
+  classification: string;
+  status: string;
+  evidence: string;
+  testCoverage: string;
+}
+
+interface FinalResultPayload {
+  prUrl: string;
+  satisfactionMatrix: SatisfactionItem[];
+  prResponseText: string;
+  regressionTest: {
+    test_framework: string;
+    test_file_name: string;
+    test_code: string;
+    cases_covered: string[];
+  };
+  diffAudit: {
+    passed: boolean;
+    audit_notes: string[];
+    verdict: string;
+  };
+}
+
 export default function DevRelAgent() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [issueUrl, setIssueUrl] = useState("");
@@ -47,7 +72,7 @@ export default function DevRelAgent() {
   const [ciLogs, setCiLogs] = useState("");
   const [showAdvancedInputs, setShowAdvancedInputs] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [finalResult, setFinalResult] = useState<any>(null);
+  const [finalResult, setFinalResult] = useState<FinalResultPayload | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const logIdRef = useRef(0);
@@ -407,7 +432,7 @@ export default function DevRelAgent() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {finalResult.satisfactionMatrix?.map((row: any, i: number) => (
+                  {finalResult.satisfactionMatrix?.map((row: SatisfactionItem, i: number) => (
                     <tr key={i} className="hover:bg-slate-900/40">
                       <td className="py-3 px-4 text-slate-200 font-sans">{row.comment}</td>
                       <td className="py-3 px-4">
