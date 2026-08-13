@@ -24,6 +24,8 @@ interface Phase1Result {
   intent: string;
   confidence: number;
   file_path: string;
+  test_file_path?: string;
+  project_language: string;
   comments_analysis: CommentAnalysis[];
   resolution_plan: string;
 }
@@ -265,9 +267,9 @@ export async function POST(req: NextRequest) {
         // 7-PHASE ELITE CONTRIBUTOR WORKFLOW
         // ==========================================
 
-        // --- PHASE 1: REVIEW ANALYSIS ---
-        sendLog("phase", "PHASE 1: REVIEW ANALYSIS — Classifying maintainer feedback & CI root causes...");
-        const phase1Prompt = `You are an elite open-source contributor agent performing Phase 1: Review Analysis.
+        // --- PHASE 1: REVIEW ANALYSIS & STACK DETECTION ---
+        sendLog("phase", "PHASE 1: REVIEW ANALYSIS — Detecting repository tech stack, existing test files & CI root causes...");
+        const phase1Prompt = `You are an elite open-source contributor agent performing Phase 1: Review Analysis & Tech Stack Identification.
 Target Item Title: ${itemTitle}
 Body: ${itemBody}
 Maintainer/CodeRabbit Feedback: ${combinedReviewComments || "None provided explicitly. Treat issue/PR body as reviewer directives."}
@@ -275,12 +277,18 @@ CI Failures / Test Logs: ${ciLogs || "None reported explicitly. Ensure code pass
 Available Repository Files:
 ${filesString}
 
-Analyze all review comments and CI test failure tracebacks thoroughly. Identify the exact root cause of any broken tests or issues.
+Analyze all review comments, CI test failure tracebacks, and repository file extensions thoroughly.
+1. Determine primary project language ("typescript", "javascript", "python", "go", "rust", etc.).
+2. Select the main code file to fix ("file_path").
+3. Select an existing relevant test file in the repository ("test_file_path") if available (e.g. matching *.test.ts, *.spec.ts, test_*.py, *_test.go).
+
 Produce a strict JSON output matching this schema:
 {
   "intent": "string",
   "confidence": number,
   "file_path": "string",
+  "test_file_path": "string",
+  "project_language": "typescript" | "javascript" | "python" | "go" | "rust" | "other",
   "comments_analysis": [
     {
       "comment": "string",
@@ -298,17 +306,17 @@ Produce a strict JSON output matching this schema:
         const phase1Raw = await safeGenerateText(phase1Prompt, true);
         const phase1Data = safeParseJSON<Phase1Result>(
           phase1Raw,
-          { intent: "Resolve maintainer reviews", confidence: 0.9, file_path: files[0] || "", comments_analysis: [], resolution_plan: "Apply requested changes and ensure all tests pass" }
+          { intent: "Resolve maintainer reviews", confidence: 0.9, file_path: files[0] || "", project_language: "typescript", comments_analysis: [], resolution_plan: "Apply requested changes and ensure all tests pass" }
         );
 
-        sendLog("success", `Phase 1 Complete: Identified intent "${phase1Data.intent}" in target file "${phase1Data.file_path}". Classified ${phase1Data.comments_analysis?.length || 1} review items.`);
+        sendLog("success", `Phase 1 Complete: Tech stack="${phase1Data.project_language || 'typescript'}". Intent="${phase1Data.intent}". Target file="${phase1Data.file_path}". Existing test="${phase1Data.test_file_path || 'None'}".`);
 
         const filePath = (phase1Data.file_path || "").replace(/^\//, '');
         if (!files.includes(filePath)) {
           throw new Error(`File ${filePath} specified by AI does not exist in repository.`);
         }
 
-        // Fetch file content
+        // Fetch primary file content
         sendLog("info", `Fetching content of ${filePath}...`);
         const response = await octokit.rest.repos.getContent({ owner, repo, path: filePath });
         const fileData = response.data;
@@ -317,25 +325,39 @@ Produce a strict JSON output matching this schema:
         }
         const fileContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
 
+        // Fetch existing test file content if identified
+        let existingTestContent = "";
+        const existingTestPath = (phase1Data.test_file_path || "").replace(/^\//, '');
+        if (existingTestPath && files.includes(existingTestPath)) {
+          try {
+            sendLog("info", `Fetching existing test file content of ${existingTestPath}...`);
+            const testRes = await octokit.rest.repos.getContent({ owner, repo, path: existingTestPath });
+            if (!Array.isArray(testRes.data) && "content" in testRes.data) {
+              existingTestContent = Buffer.from(testRes.data.content, 'base64').toString('utf-8');
+            }
+          } catch {
+            // ignore if unable to fetch
+          }
+        }
+
         // --- PHASE 2: IMPLEMENTATION ---
         sendLog("phase", "PHASE 2: IMPLEMENTATION — Applying code transformations to satisfy all reviews & pass all tests...");
         const phase2Prompt = `You are an elite open-source contributor performing Phase 2: Implementation.
-Modify code to satisfy every blocking review comment and ensure ALL repository tests pass 100%.
+Project Language: ${phase1Data.project_language || "typescript"}
+Target File: ${filePath}
+
+Modify code to satisfy every review comment, fix all CI failure logs, and ensure ALL repository tests pass 100%.
 
 Crucial Rules:
 - Fix the underlying root cause so that all unit/integration test assertions pass cleanly.
+- Ensure 100% type check and syntax validity for ${phase1Data.project_language || "typescript"}.
+- Never break existing exports, imports, or function signatures.
 - Never hardcode tool names when tool registration is dynamic.
-- Never leave stale log messages.
-- Preserve backwards compatibility unless explicitly instructed otherwise.
-- Preserve exact type hints, import structures, function signatures, and docstrings.
-- Ensure 100% linter, formatter, and type check compliance (no syntax or typing errors).
-- Do not remove unrelated comments or delete existing test assertions.
-- Do not introduce dead code.
+- Preserve backwards compatibility and docstrings.
 - Follow repository conventions.
 
 Resolution Plan: ${phase1Data.resolution_plan}
 CI Failure Logs: ${ciLogs || "None provided. Code must be bug-free."}
-File Path: ${filePath}
 Current File Content:
 ${fileContent}
 
@@ -345,29 +367,36 @@ Output ONLY the raw updated file content. Do NOT include markdown code blocks or
         updatedCode = updatedCode.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim();
         sendLog("success", "Phase 2 Complete: Code transformations generated to pass all test requirements.");
 
-        // --- PHASE 3: REGRESSION TESTING ---
-        sendLog("phase", "PHASE 3: REGRESSION TESTING — Generating executable regression test suite...");
+        // --- PHASE 3: REGRESSION TESTING & TEST SUITE UPDATE ---
+        sendLog("phase", "PHASE 3: REGRESSION TESTING — Generating matching test suite for " + (phase1Data.project_language || "typescript") + "...");
         const phase3Prompt = `You are an elite open-source contributor performing Phase 3: Regression Testing.
+Project Language: ${phase1Data.project_language || "typescript"}
 Review Comments: ${JSON.stringify(phase1Data.comments_analysis)}
 Target File: ${filePath}
+Existing Test File Path: ${existingTestPath || "None"}
+Existing Test Content: ${existingTestContent ? existingTestContent.substring(0, 1500) : "None"}
 CI Failures: ${ciLogs || "None"}
 
-Generate a complete, executable, production-ready regression test suite matching the target repository's testing framework (e.g. pytest, jest, vitest, go test).
-Cover edge cases, bug validation, and happy paths.
+Generate a complete, executable, production-ready regression test suite matching the target repository's primary language and test framework!
+- For TypeScript/JavaScript (Jest/Vitest/Mocha): output test_framework "jest" or "vitest", test_file_name ending in ".test.ts", ".spec.ts", ".test.js", or ".spec.js" matching repo structure (e.g. "${existingTestPath || 'src/__tests__/regression.test.ts'}").
+- For Python: output pytest and "tests/test_regression.py".
+- For Go: output go_test and "*_test.go".
+
 Respond in JSON format strictly matching this schema:
 {
-  "test_framework": "pytest",
-  "test_file_name": "tests/test_regression.py",
-  "test_code": "def test_regression(): pass",
+  "test_framework": "jest" | "vitest" | "pytest" | "go_test" | "other",
+  "test_file_name": "string",
+  "test_code": "string",
   "cases_covered": ["valid_case", "edge_case", "regression_verification"]
 }`;
 
         const phase3Raw = await safeGenerateText(phase3Prompt, true);
+        const defaultTestFileName = existingTestPath || (phase1Data.project_language === "python" ? "tests/test_regression.py" : "src/__tests__/regression.test.ts");
         const phase3Data = safeParseJSON<Phase3Result>(
           phase3Raw,
-          { test_framework: "pytest", test_file_name: "tests/test_regression.py", test_code: "# Regression test suite", cases_covered: ["edge_cases"] }
+          { test_framework: phase1Data.project_language === "python" ? "pytest" : "jest", test_file_name: defaultTestFileName, test_code: "// Regression test suite", cases_covered: ["edge_cases"] }
         );
-        sendLog("success", `Phase 3 Complete: Created regression test file "${phase3Data.test_file_name}" covering ${phase3Data.cases_covered?.length || 1} test conditions.`);
+        sendLog("success", `Phase 3 Complete: Created/Updated test file "${phase3Data.test_file_name}" (${phase3Data.test_framework}) covering ${phase3Data.cases_covered?.length || 1} test conditions.`);
 
         // --- PHASE 4: DIFF REVIEW ---
         sendLog("phase", "PHASE 4: DIFF REVIEW — Performing self-audit of generated changes...");
