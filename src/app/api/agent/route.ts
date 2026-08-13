@@ -282,6 +282,11 @@ Analyze all review comments, CI test failure tracebacks, and repository file ext
 2. Select the main code file to fix ("file_path").
 3. Select an existing relevant test file in the repository ("test_file_path") if available (e.g. matching *.test.ts, *.spec.ts, test_*.py, *_test.go).
 
+CRITICAL CI FIXING RULE:
+If CI Logs indicate an "Upload coverage reports" or "upload-artifact" failure ("No files were found with the provided path: coverage packages/*/coverage"):
+- Classify this as a CI/Coverage configuration failure.
+- Select the relevant package.json, test runner config (e.g. vitest.config.ts, jest.config.js, nyc.config.js), or GitHub workflow file (.github/workflows/*.yml) as "file_path" to ensure coverage files are generated or uploaded properly.
+
 Produce a strict JSON output matching this schema:
 {
   "intent": "string",
@@ -350,6 +355,7 @@ Modify code to satisfy every review comment, fix all CI failure logs, and ensure
 
 Crucial Rules:
 - Fix the underlying root cause so that all unit/integration test assertions pass cleanly.
+- If fixing an Upload Coverage Reports failure ("No files were found with the provided path: coverage"): configure test scripts / coverage flags (e.g. --coverage) or artifact upload settings so coverage reports are properly generated at coverage/ or packages/*/coverage.
 - Ensure 100% type check and syntax validity for ${phase1Data.project_language || "typescript"}.
 - Never break existing exports, imports, or function signatures.
 - Never hardcode tool names when tool registration is dynamic.
