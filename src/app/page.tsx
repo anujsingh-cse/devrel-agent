@@ -387,7 +387,15 @@ export default function DevRelAgent() {
                       {log.type === "error" && (
                         <span className="text-rose-400 font-semibold shrink-0">ERR</span>
                       )}
-                      <span className={`break-all ${log.type === "phase" ? "text-cyan-200 font-semibold" : "text-slate-200"}`}>{log.text}</span>
+                      {log.type === "monitor" && (
+                        <span className="text-amber-400 font-semibold flex items-center gap-1 shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />WATCH
+                        </span>
+                      )}
+                      {log.type === "ci_status" && (
+                        <span className="text-teal-400 font-bold shrink-0 bg-teal-950 px-1.5 py-0.5 rounded border border-teal-800">CI</span>
+                      )}
+                      <span className={`break-all ${log.type === "phase" ? "text-cyan-200 font-semibold" : log.type === "ci_status" ? "text-teal-200 font-semibold" : log.type === "monitor" ? "text-amber-200" : "text-slate-200"}`}>{log.text}</span>
                     </motion.div>
                   ))
                 )}

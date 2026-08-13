@@ -579,6 +579,225 @@ Guidelines:
           sendLog("success", `Pull Request #${pr.number} successfully created!`);
         }
 
+        // --- PHASE 8: CI MONITOR & AUTO-FIX LOOP ---
+        sendLog("phase", "PHASE 8: CI MONITOR — Watching PR checks until all pass or max retries reached...");
+
+        const MAX_CI_RETRIES = 3;
+        const POLL_INTERVAL_MS = 30_000; // 30 seconds
+        const MAX_POLL_WAIT_MS = 10 * 60 * 1000; // 10 minutes per retry cycle
+
+        // Determine the PR number we need to monitor
+        let monitorPrNumber: number | null = null;
+        const monitorHeadBranch = branchName;
+
+        if (isPR) {
+          monitorPrNumber = parseInt(targetNumber);
+        } else if (prUrl) {
+          const createdPrMatch = prUrl.match(/\/pull\/(\d+)/);
+          if (createdPrMatch) {
+            monitorPrNumber = parseInt(createdPrMatch[1]);
+          }
+        }
+
+        if (monitorPrNumber) {
+          let ciRetryCount = 0;
+          let allChecksPassed = false;
+
+          while (ciRetryCount < MAX_CI_RETRIES && !allChecksPassed) {
+            sendLog("monitor", `CI watch cycle ${ciRetryCount + 1}/${MAX_CI_RETRIES} — polling check status on branch "${monitorHeadBranch}"...`);
+
+            // Get the latest head SHA for the branch
+            let headSha = "";
+            try {
+              const { data: prInfo } = await octokit.rest.pulls.get({
+                owner, repo, pull_number: monitorPrNumber
+              });
+              headSha = prInfo.head.sha;
+            } catch {
+              sendLog("info", "Could not fetch PR head SHA. Skipping CI monitoring.");
+              break;
+            }
+
+            // Poll check runs until all complete or timeout
+            const pollStart = Date.now();
+            let checksComplete = false;
+            let failedChecks: Array<{ name: string; conclusion: string | null; details_url: string | null }> = [];
+            let totalChecks = 0;
+            let passedChecks = 0;
+
+            while (Date.now() - pollStart < MAX_POLL_WAIT_MS) {
+              try {
+                const { data: checkData } = await octokit.rest.checks.listForRef({
+                  owner, repo, ref: headSha
+                });
+
+                totalChecks = checkData.total_count;
+                const runs = checkData.check_runs;
+
+                if (totalChecks === 0) {
+                  sendLog("info", "No CI checks configured on this repository. Skipping monitoring.");
+                  checksComplete = true;
+                  allChecksPassed = true;
+                  break;
+                }
+
+                const pending = runs.filter(r => r.status !== "completed");
+                if (pending.length > 0) {
+                  sendLog("monitor", `⏳ ${pending.length}/${totalChecks} checks still running... waiting 30s`);
+                  await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+                  continue;
+                }
+
+                // All checks completed — evaluate results
+                checksComplete = true;
+                failedChecks = runs
+                  .filter(r => r.conclusion !== "success" && r.conclusion !== "skipped" && r.conclusion !== "neutral")
+                  .map(r => ({ name: r.name, conclusion: r.conclusion, details_url: r.details_url }));
+                passedChecks = runs.filter(r => r.conclusion === "success" || r.conclusion === "skipped" || r.conclusion === "neutral").length;
+
+                if (failedChecks.length === 0) {
+                  allChecksPassed = true;
+                }
+                break;
+              } catch (pollErr: unknown) {
+                const errMsg = pollErr instanceof Error ? pollErr.message : String(pollErr);
+                sendLog("info", `Check status poll error: ${errMsg}. Retrying in 30s...`);
+                await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+              }
+            }
+
+            if (!checksComplete) {
+              sendLog("monitor", `⏱️ CI poll timed out after ${MAX_POLL_WAIT_MS / 60000} minutes. Checks may still be running.`);
+              break;
+            }
+
+            if (allChecksPassed) {
+              sendLog("ci_status", `✅ All ${totalChecks} checks passed! PR #${monitorPrNumber} is ready to merge.`);
+              break;
+            }
+
+            // Some checks failed — attempt auto-fix
+            sendLog("ci_status", `❌ ${failedChecks.length} check(s) failed, ${passedChecks} passed. Attempting auto-fix...`);
+            for (const fc of failedChecks) {
+              sendLog("monitor", `  Failed: "${fc.name}" (${fc.conclusion || "unknown"})`);
+            }
+
+            // Try to fetch failure logs from GitHub Actions
+            let failureLogs = "";
+            try {
+              // List workflow runs for the head SHA
+              const { data: workflowRuns } = await octokit.rest.actions.listWorkflowRunsForRepo({
+                owner, repo, head_sha: headSha, per_page: 5
+              });
+
+              for (const run of workflowRuns.workflow_runs) {
+                if (run.conclusion === "failure" || run.conclusion === "cancelled") {
+                  try {
+                    const { data: jobs } = await octokit.rest.actions.listJobsForWorkflowRun({
+                      owner, repo, run_id: run.id
+                    });
+
+                    for (const job of jobs.jobs) {
+                      if (job.conclusion === "failure") {
+                        try {
+                          const logResponse = await octokit.rest.actions.downloadJobLogsForWorkflowRun({
+                            owner, repo, job_id: job.id
+                          });
+                          const logText = typeof logResponse.data === "string" ? logResponse.data : String(logResponse.data);
+                          // Truncate to last 3000 chars to keep prompt manageable
+                          failureLogs += `\n--- Job: ${job.name} ---\n${logText.slice(-3000)}`;
+                        } catch {
+                          // Log download may fail for some permission levels
+                          failureLogs += `\n--- Job: ${job.name} --- (logs not accessible)`;
+                        }
+                      }
+                    }
+                  } catch {
+                    sendLog("info", `Could not fetch jobs for workflow run ${run.id}.`);
+                  }
+                }
+              }
+            } catch {
+              sendLog("info", "Could not fetch CI failure logs from GitHub Actions API.");
+            }
+
+            if (!failureLogs) {
+              failureLogs = `Failed checks: ${failedChecks.map(f => `${f.name} (${f.conclusion})`).join(", ")}. No detailed logs available.`;
+            }
+
+            sendLog("monitor", `🔧 Analyzing CI failure logs (${failureLogs.length} chars) and generating fix...`);
+
+            // Re-fetch the current file content from the branch (it may have been updated)
+            let currentCode = updatedCode;
+            let currentFileSha = "";
+            try {
+              const { data: latestFile } = await octokit.rest.repos.getContent({
+                owner: targetOwner, repo, path: filePath, ref: monitorHeadBranch
+              });
+              if (!Array.isArray(latestFile) && "content" in latestFile) {
+                currentCode = Buffer.from(latestFile.content, "base64").toString("utf-8");
+                currentFileSha = latestFile.sha;
+              }
+            } catch {
+              sendLog("info", "Could not re-fetch latest file from branch. Using last known content.");
+            }
+
+            // Ask AI to fix the CI failure
+            const ciFixPrompt = `You are an elite open-source contributor fixing a CI failure on a Pull Request.
+Project Language: ${phase1Data.project_language || "typescript"}
+File: ${filePath}
+CI Retry Attempt: ${ciRetryCount + 1}/${MAX_CI_RETRIES}
+
+CI FAILURE LOGS:
+${failureLogs.substring(0, 6000)}
+
+CURRENT FILE CONTENT:
+${currentCode}
+
+Analyze the CI failure logs carefully. Fix ONLY the root cause indicated by the logs.
+Rules:
+- Fix the exact error shown in the logs (type errors, test assertion failures, lint errors, build errors).
+- Do NOT make unrelated changes.
+- Do NOT add markdown code fences.
+- Output ONLY the complete updated file content, nothing else.`;
+
+            let ciFixCode = await safeGenerateText(ciFixPrompt, false);
+            ciFixCode = ciFixCode.replace(/^```[\w]*\n?/, "").replace(/\n?```$/, "").trim();
+
+            // Push the fix commit
+            try {
+              await octokit.rest.repos.createOrUpdateFileContents({
+                owner: targetOwner,
+                repo,
+                path: filePath,
+                message: `fix: resolve CI failure (attempt ${ciRetryCount + 1}) for #${targetNumber}`,
+                content: Buffer.from(ciFixCode).toString("base64"),
+                sha: currentFileSha || fileData.sha,
+                branch: monitorHeadBranch
+              });
+              updatedCode = ciFixCode;
+              sendLog("success", `Pushed CI fix commit (attempt ${ciRetryCount + 1}) to branch "${monitorHeadBranch}".`);
+            } catch (commitErr: unknown) {
+              const errMsg = commitErr instanceof Error ? commitErr.message : String(commitErr);
+              sendLog("monitor", `⚠️ Could not push fix commit: ${errMsg}. Stopping CI monitor.`);
+              break;
+            }
+
+            ciRetryCount++;
+
+            if (ciRetryCount < MAX_CI_RETRIES) {
+              sendLog("monitor", `Waiting 30s for new CI run to start before next poll cycle...`);
+              await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+            }
+          }
+
+          if (!allChecksPassed && monitorPrNumber) {
+            sendLog("ci_status", `⚠️ CI monitor exhausted ${MAX_CI_RETRIES} retries. Some checks may still be failing on PR #${monitorPrNumber}. Manual review recommended.`);
+          }
+        } else {
+          sendLog("info", "No PR number detected. Skipping CI monitoring.");
+        }
+
         // Send final structured result payload
         sendLog("result", "Elite Open-Source Contributor Workflow Completed Successfully!", {
           prUrl: prUrl || url,
