@@ -4,7 +4,21 @@ import { constantTimeCompare } from "@/lib/auth";
 
 const MAX_WEBHOOK_BODY_BYTES = 5 * 1024 * 1024; // 5MB limit
 
+export async function GET() {
+  const secretConfigured = Boolean(process.env.GITHUB_WEBHOOK_SECRET);
+  return NextResponse.json({
+    service: "DevRel Agent Autonomous GitHub Webhook",
+    status: "active",
+    secretConfigured,
+    supportedEvents: ["issues.opened", "issues.labeled", "pull_request_review.submitted"],
+    contentType: "application/json",
+    setupInstructions:
+      "In GitHub Repository > Settings > Webhooks > Add webhook. Set Payload URL to https://your-domain.com/api/webhook with Content type application/json.",
+  });
+}
+
 export async function POST(req: NextRequest) {
+
   try {
     const signature = req.headers.get("x-hub-signature-256");
     const event = req.headers.get("x-github-event");

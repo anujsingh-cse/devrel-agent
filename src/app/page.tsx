@@ -288,7 +288,7 @@ export default function DevRelAgent() {
             </button>
 
             <a
-              href="https://github.com/anujsinghcse"
+              href="https://github.com/anujsingh-cse/devrel-agent"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
@@ -1084,14 +1084,19 @@ export default function DevRelAgent() {
           </div>
           <div className="flex items-center gap-6">
             <a
-              href="https://github.com/anujsinghcse"
+              href="https://github.com/anujsingh-cse/devrel-agent"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-foreground transition-colors"
             >
               GitHub
             </a>
-            <a href="/api/webhook" className="hover:text-foreground transition-colors">
+            <a
+              href="/api/webhook"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-foreground transition-colors"
+            >
               Webhook Endpoint
             </a>
           </div>
