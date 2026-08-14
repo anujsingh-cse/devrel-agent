@@ -525,6 +525,32 @@ export default function DevRelAgent() {
                 )}
               </div>
 
+              {/* 1-Click Quick Demo Chips */}
+              <div className="flex items-center gap-2 pt-1 flex-wrap text-xs">
+                <span className="text-muted-foreground font-mono text-[11px]">Quick Demos:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIssueUrl("https://github.com/facebook/react/issues/28412");
+                    setAgentMode("issue_fix");
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-accent/10 hover:text-accent hover:border-accent/30 border border-slate-200 text-[11px] font-mono transition-all cursor-pointer"
+                >
+                  React Issue #28412
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIssueUrl("https://github.com/vercel/next.js/pull/61230");
+                    setAgentMode("elite_pr_contributor");
+                    setReviewComments("Ensure router cache invalidation handles parallel route segments cleanly.");
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-accent/10 hover:text-accent hover:border-accent/30 border border-slate-200 text-[11px] font-mono transition-all cursor-pointer"
+                >
+                  Next.js PR #61230 (Review Fix)
+                </button>
+              </div>
+
               {/* GitHub PAT Status Pill Trigger */}
               <div className="flex items-center justify-between text-xs pt-1 text-muted-foreground">
                 <button
@@ -625,7 +651,7 @@ export default function DevRelAgent() {
                 </div>
                 <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
                   <TerminalIcon className="h-3.5 w-3.5 text-[#0052FF]" />
-                  <span>devrel-agent-v2</span>
+                  <span>devrel-agent-v2.4</span>
                 </div>
                 <span
                   className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[10px] uppercase ${
@@ -650,12 +676,33 @@ export default function DevRelAgent() {
                 aria-label="Agent execution log"
               >
                 {logs.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3 text-center px-4">
-                    <Code2 className="h-8 w-8 text-slate-600 animate-bounce" />
-                    <p className="text-slate-400 font-sans text-sm">
-                      Enter a GitHub PR or Issue URL and click{" "}
-                      <strong className="text-white">Execute Workflow</strong>.
-                    </p>
+                  <div className="h-full flex flex-col justify-between text-slate-400 font-mono text-xs p-2 select-none">
+                    <div className="space-y-2">
+                      <div className="text-accent font-bold text-sm flex items-center gap-2">
+                        <Code2 className="h-4 w-4" />
+                        <span>devrel-agent@v2.4 [Autonomous Pipeline]</span>
+                      </div>
+                      <div className="text-slate-600">-------------------------------------------</div>
+                      <div className="text-slate-300 flex items-center gap-2 text-[11px]">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        <span>Inference Engine: <strong className="text-white">NVIDIA NIM</strong> (Llama 3.1 &amp; Nemotron)</span>
+                      </div>
+                      <div className="text-slate-300 flex items-center gap-2 text-[11px]">
+                        <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                        <span>Automation: <strong className="text-white">8-Phase Multi-File Transformer</strong></span>
+                      </div>
+                      <div className="text-slate-300 flex items-center gap-2 text-[11px]">
+                        <span className="w-2 h-2 rounded-full bg-purple-400" />
+                        <span>Security: <strong className="text-white">BYOK Permission Sandbox</strong></span>
+                      </div>
+                      <div className="pt-2 text-slate-400 text-[11px]">
+                        &bull; Paste an issue or PR URL on the left, or click a Quick Demo chip.
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-emerald-400 pt-3 border-t border-slate-800/80 text-[11px]">
+                      <span className="text-slate-500">guest@devrel:~$</span>
+                      <span className="animate-pulse">awaiting_workflow_trigger_</span>
+                    </div>
                   </div>
                 ) : (
                   logs.map((log) => (
@@ -931,6 +978,54 @@ export default function DevRelAgent() {
                 Connect your personal GitHub PAT to automatically create forks, push branches, and open verified PRs under your own profile.
               </p>
             </Card>
+          </div>
+        </div>
+      </section>
+
+      {/* Inverted Slate Contrast Workflow Section */}
+      <section className="py-24 px-6 bg-[#0F172A] text-white relative overflow-hidden dot-pattern-dark">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-12 items-center relative z-10">
+          <div className="space-y-6">
+            <Badge pulse>Continuous Autonomous Loop</Badge>
+            <h2 className="font-serif text-4xl sm:text-5xl text-white leading-tight">
+              From GitHub Issue <br />
+              to Merged PR in <span className="gradient-text">Minutes</span>
+            </h2>
+            <p className="text-slate-300 leading-relaxed">
+              No manual branch setup required. DevRel Agent analyzes ASTs, synthesizes regression tests, and drafts precise PRs with full evidence logs.
+            </p>
+            <div className="pt-2 flex flex-col gap-3">
+              <div className="flex items-center gap-4 p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                <div className="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center font-bold text-sm">
+                  1
+                </div>
+                <span className="text-sm text-slate-200">GitHub Issue / PR Review Parsed &amp; Analyzed</span>
+              </div>
+              <div className="flex items-center gap-4 p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                <div className="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center font-bold text-sm">
+                  2
+                </div>
+                <span className="text-sm text-slate-200">NVIDIA NIM Synthesizes Multi-File Fix &amp; Tests</span>
+              </div>
+              <div className="flex items-center gap-4 p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                <div className="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center font-bold text-sm">
+                  3
+                </div>
+                <span className="text-sm text-slate-200">Auto-Remediates CI Failures until Green</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="relative flex justify-center">
+            <div className="w-72 h-72 sm:w-96 sm:h-96 rounded-full border border-slate-700/50 flex items-center justify-center relative animate-spin [animation-duration:60s]">
+              <div className="w-56 h-56 rounded-full border border-dashed border-accent/40" />
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-accent shadow-accent" />
+            </div>
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
+              <Sparkles className="h-10 w-10 text-accent mb-2" />
+              <div className="font-serif text-3xl font-bold text-white">100%</div>
+              <div className="text-xs font-mono text-slate-400 uppercase tracking-widest mt-1">Regression Test Target</div>
+            </div>
           </div>
         </div>
       </section>

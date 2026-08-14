@@ -32,17 +32,19 @@ export function Card({
   }
 
   const baseStyles =
-    "rounded-2xl border border-[#E2E8F0] bg-white transition-all duration-300 p-6 md:p-8";
+    "rounded-2xl border border-slate-200/80 bg-white transition-all duration-300 p-6 md:p-8 hover:-translate-y-1";
 
   const variantStyles = {
-    standard: "shadow-md hover:shadow-xl hover:-translate-y-1 hover:border-[rgba(0,82,255,0.3)]",
-    elevated: "shadow-xl hover:shadow-2xl hover:-translate-y-1 border-[rgba(0,82,255,0.2)]",
+    standard:
+      "shadow-sm hover:shadow-xl hover:border-accent/40 hover:shadow-accent/5",
+    elevated:
+      "shadow-lg hover:shadow-2xl border-slate-200 hover:border-accent/50",
   };
 
   return (
     <div
       className={`${baseStyles} ${
-        variantStyles[variant as "standard" | "elevated"]
+        variantStyles[variant as "standard" | "elevated"] || variantStyles.standard
       } ${className}`}
     >
       {children}
