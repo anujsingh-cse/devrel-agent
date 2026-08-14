@@ -36,19 +36,15 @@ export async function POST(req: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
-      const sendEvent = (event: string, data: Record<string, unknown>) => {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-        );
-      };
-
-      const log = (type: LogType, text: string) => {
-        sendEvent("log", {
+      const sendLog = (type: LogType, text: string, payload?: Record<string, unknown>) => {
+        const data = JSON.stringify({
           id: Math.random().toString(36).substring(7),
           time: new Date().toLocaleTimeString(),
           type,
           text,
+          ...(payload ? { payload } : {}),
         });
+        controller.enqueue(encoder.encode(`data: ${data}\n\n`));
       };
 
       try {
@@ -59,21 +55,13 @@ export async function POST(req: NextRequest) {
             maxCycles,
             autoMergeIfReady,
           },
-          log
+          (type, text) => sendLog(type, text)
         );
 
-        sendEvent("done", {
-          merged: result.merged,
-          state: result.state,
-          prUrl: result.prUrl,
-          totalCommitsPushed: result.totalCommitsPushed,
-          cyclesExecuted: result.cyclesExecuted,
-          summary: result.summary,
-        });
+        sendLog("success", result.summary, { result });
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        log("error", `PR Autopilot failed: ${errorMsg}`);
-        sendEvent("error", { message: errorMsg });
+        sendLog("error", `PR Autopilot error: ${errorMsg}`);
       } finally {
         controller.close();
       }

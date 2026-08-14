@@ -185,35 +185,42 @@ export default function DevRelAgent() {
         buffer = events.pop() || "";
 
         for (const event of events) {
-          const trimmed = event.trim();
-          if (trimmed.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(trimmed.substring(6));
-              const id = `log-${++logIdRef.current}`;
+          const lines = event.split("\n");
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data:")) {
+              try {
+                const jsonStr = trimmed.replace(/^data:\s*/, "");
+                const data = JSON.parse(jsonStr);
+                const id = `log-${++logIdRef.current}`;
 
-              if (data.type === "phase" && typeof data.text === "string") {
-                const phaseMatch = data.text.match(/PHASE\s+(\d+)/i);
-                if (phaseMatch) {
-                  setCurrentPhase(parseInt(phaseMatch[1], 10));
+                if (data.type === "phase" && typeof data.text === "string") {
+                  const phaseMatch = data.text.match(/PHASE\s+(\d+)/i);
+                  if (phaseMatch) {
+                    setCurrentPhase(parseInt(phaseMatch[1], 10));
+                  }
                 }
-              }
 
-              if (data.type === "result" && data.payload) {
-                setFinalResult(data.payload);
-                setCurrentPhase(8);
-              }
+                if (data.type === "result" && data.payload) {
+                  setFinalResult(data.payload);
+                  setCurrentPhase(8);
+                }
 
-              if (data.type === "error") {
-                setLastError(data.text || data.message);
-              }
+                if (data.type === "error") {
+                  setLastError(data.text || data.message);
+                }
 
-              if (data.merged) {
-                setCurrentPhase(8);
-              }
+                if (data.merged) {
+                  setCurrentPhase(8);
+                }
 
-              setLogs((prev) => [...prev, { ...data, id, text: data.text || data.summary || (data.merged ? "PR Merged Successfully!" : "") }]);
-            } catch {
-              // Ignore partial JSON parse errors
+                const logText = data.text || data.summary || (data.merged ? "PR Merged Successfully!" : "");
+                if (logText) {
+                  setLogs((prev) => [...prev, { ...data, id, text: logText }]);
+                }
+              } catch {
+                // Ignore partial JSON parse errors
+              }
             }
           }
         }

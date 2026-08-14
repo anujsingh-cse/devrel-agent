@@ -1,7 +1,7 @@
-import { Octokit } from "@octokit/rest";
 import { generateAIText } from "./ai-providers";
 import {
   parseGitHubUrl,
+  getOctokit,
   fetchFileTree,
   fetchFileContent,
   commitFilesMulti,
@@ -39,12 +39,13 @@ export async function runPRMergerLoop(
 
   const prNumber = parseInt(targetNumber, 10);
   const token = userToken?.trim() || process.env.GITHUB_TOKEN?.trim();
+  const octokit = getOctokit(token);
+
   if (!token) {
-    throw new Error("GitHub Access Token is required to execute PR Auto-Merger loop.");
+    log?.("info", "Operating in Read-Only Diagnosis Mode. (Connect personal GitHub PAT to push fixes & merge).");
   }
 
-  const octokit = new Octokit({ auth: token });
-  log?.("phase", `PR MERGER AGENT ENGAGED — Monitoring PR #${prNumber} on ${owner}/${repo} until merged...`);
+  log?.("phase", `PR MERGER AGENT ENGAGED — Monitoring PR #${prNumber} on ${owner}/${repo}...`);
 
   let cycle = 0;
   let totalCommitsPushed = 0;
@@ -225,6 +226,12 @@ Rules:
       }
 
       if (filesToCommit.length > 0) {
+        if (!token) {
+          log?.("info", `[Dry Run Mode] Synthesized fixes for ${filesToCommit.length} file(s). Connect GitHub PAT in header to push commits directly.`);
+          prState = "ready_to_merge";
+          break;
+        }
+
         const commitMsg = `fix(agent): resolve maintainer reviews & test assertions (cycle ${cycle})`;
         await commitFilesMulti(octokit, headOwner, repo, headBranch, commitMsg, filesToCommit);
         totalCommitsPushed++;
@@ -268,7 +275,7 @@ Keep it natural, friendly, and concise.`;
       // All CI checks passed and no pending change requests!
       log?.("ci_status", `All ${checkData.total_count} CI checks are green! No blocking reviews pending.`);
 
-      if (autoMergeIfReady) {
+      if (autoMergeIfReady && token) {
         log?.("action", `Attempting to merge PR #${prNumber} automatically...`);
         try {
           const { data: mergeRes } = await octokit.rest.pulls.merge({
