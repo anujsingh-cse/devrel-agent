@@ -31,7 +31,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
-import { FinalResultPayload } from "@/lib/types";
+import { FinalResultPayload, AgentMode } from "@/lib/types";
 
 interface LogEntry {
   id: string;
@@ -69,9 +69,7 @@ export default function DevRelAgent() {
   const [userGithubToken, setUserGithubToken] = useState("");
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [hideTokenSecret, setHideTokenSecret] = useState(true);
-  const [agentMode, setAgentMode] = useState<"elite_pr_contributor" | "issue_fix">(
-    "elite_pr_contributor"
-  );
+  const [agentMode, setAgentMode] = useState<AgentMode>("elite_pr_contributor");
   const [reviewComments, setReviewComments] = useState("");
   const [ciLogs, setCiLogs] = useState("");
   const [showAdvancedInputs, setShowAdvancedInputs] = useState(false);
@@ -148,16 +146,27 @@ export default function DevRelAgent() {
     abortRef.current = controller;
 
     try {
-      const response = await fetch("/api/agent", {
+      const endpoint = agentMode === "pr_merger_autopilot" ? "/api/pr-merger" : "/api/agent";
+      const requestPayload =
+        agentMode === "pr_merger_autopilot"
+          ? {
+              prUrl: issueUrl,
+              userGithubToken: userGithubToken.trim() || undefined,
+              maxCycles: 5,
+              autoMergeIfReady: true,
+            }
+          : {
+              url: issueUrl,
+              mode: agentMode,
+              reviewComments,
+              ciLogs,
+              userGithubToken: userGithubToken.trim() || undefined,
+            };
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: issueUrl,
-          mode: agentMode,
-          reviewComments,
-          ciLogs,
-          userGithubToken: userGithubToken.trim() || undefined,
-        }),
+        body: JSON.stringify(requestPayload),
         signal: controller.signal,
       });
 
@@ -195,10 +204,14 @@ export default function DevRelAgent() {
               }
 
               if (data.type === "error") {
-                setLastError(data.text);
+                setLastError(data.text || data.message);
               }
 
-              setLogs((prev) => [...prev, { ...data, id }]);
+              if (data.merged) {
+                setCurrentPhase(8);
+              }
+
+              setLogs((prev) => [...prev, { ...data, id, text: data.text || data.summary || (data.merged ? "PR Merged Successfully!" : "") }]);
             } catch {
               // Ignore partial JSON parse errors
             }
@@ -464,7 +477,7 @@ export default function DevRelAgent() {
             )}
 
             {/* Mode Switcher */}
-            <div className="flex items-center gap-2 p-1.5 rounded-xl bg-muted border border-border w-fit">
+            <div className="flex items-center gap-2 p-1.5 rounded-xl bg-muted border border-border w-fit flex-wrap">
               <button
                 type="button"
                 onClick={() => setAgentMode("elite_pr_contributor")}
@@ -489,6 +502,18 @@ export default function DevRelAgent() {
                 <Zap className="h-4 w-4 text-amber-500" />
                 <span>Issue Auto-Fixer</span>
               </button>
+              <button
+                type="button"
+                onClick={() => setAgentMode("pr_merger_autopilot")}
+                className={`px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all flex items-center gap-2 ${
+                  agentMode === "pr_merger_autopilot"
+                    ? "bg-white text-foreground shadow-sm font-semibold ring-1 ring-emerald-400"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <GitMerge className="h-4 w-4 text-emerald-600" />
+                <span>PR Auto-Merger (Loop)</span>
+              </button>
             </div>
 
             {/* Interactive Issue/PR URL Form */}
@@ -497,7 +522,9 @@ export default function DevRelAgent() {
                 <Input
                   type="url"
                   placeholder={
-                    agentMode === "elite_pr_contributor"
+                    agentMode === "pr_merger_autopilot"
+                      ? "Paste GitHub PR URL (e.g. github.com/owner/repo/pull/123)..."
+                      : agentMode === "elite_pr_contributor"
                       ? "Paste GitHub PR or Issue URL..."
                       : "Paste GitHub Issue URL..."
                   }
@@ -519,7 +546,7 @@ export default function DevRelAgent() {
                     disabled={!issueUrl}
                     className="w-full sm:w-auto shrink-0"
                   >
-                    <span>Execute Workflow</span>
+                    <span>{agentMode === "pr_merger_autopilot" ? "Start Merge Loop" : "Execute Workflow"}</span>
                     <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                   </Button>
                 )}
@@ -542,12 +569,11 @@ export default function DevRelAgent() {
                   type="button"
                   onClick={() => {
                     setIssueUrl("https://github.com/vercel/next.js/pull/61230");
-                    setAgentMode("elite_pr_contributor");
-                    setReviewComments("Ensure router cache invalidation handles parallel route segments cleanly.");
+                    setAgentMode("pr_merger_autopilot");
                   }}
-                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-accent/10 hover:text-accent hover:border-accent/30 border border-slate-200 text-[11px] font-mono transition-all cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-mono transition-all cursor-pointer font-semibold"
                 >
-                  Next.js PR #61230 (Review Fix)
+                  Next.js PR #61230 (Merge Autopilot)
                 </button>
               </div>
 

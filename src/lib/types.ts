@@ -1,6 +1,10 @@
+export type AgentMode = "issue_fix" | "elite_pr_contributor" | "pr_merger_autopilot";
+
+export type LogType = "phase" | "info" | "action" | "success" | "error" | "monitor" | "ci_status";
+
 export interface AgentRequestBody {
   url?: string;
-  mode?: "issue_fix" | "elite_pr_contributor";
+  mode?: AgentMode;
   reviewComments?: string;
   ciLogs?: string;
   userGithubToken?: string;
