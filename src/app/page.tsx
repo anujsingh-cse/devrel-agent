@@ -83,7 +83,7 @@ export default function DevRelAgent() {
 
   const abortRef = useRef<AbortController | null>(null);
   const logIdRef = useRef(0);
-  const logsEndRef = useRef<HTMLDivElement | null>(null);
+  const terminalContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Load user GitHub token from sessionStorage on mount (clears legacy localStorage)
   useEffect(() => {
@@ -112,10 +112,13 @@ export default function DevRelAgent() {
   };
 
 
-  // Auto-scroll logs to bottom
+  // Auto-scroll terminal container to bottom only (no page jump)
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (terminalContainerRef.current) {
+      terminalContainerRef.current.scrollTop = terminalContainerRef.current.scrollHeight;
+    }
   }, [logs]);
+
 
   // Cleanup stream on unmount
   useEffect(() => {
@@ -709,12 +712,14 @@ export default function DevRelAgent() {
                 </span>
               </div>
 
-              {/* Terminal Logs Window with Auto-scroll */}
+              {/* Terminal Logs Window with Container-scoped Auto-scroll */}
               <div
+                ref={terminalContainerRef}
                 className="font-mono text-xs h-[380px] overflow-y-auto space-y-3 pr-2 scrollbar-thin scroll-smooth"
                 role="log"
                 aria-label="Agent execution log"
               >
+
                 {logs.length === 0 ? (
                   <div className="h-full flex flex-col justify-between text-slate-400 font-mono text-xs p-2 select-none">
                     <div className="space-y-2">
@@ -801,9 +806,9 @@ export default function DevRelAgent() {
                     </motion.div>
                   ))
                 )}
-                <div ref={logsEndRef} />
               </div>
             </Card>
+
           </motion.div>
         </motion.div>
       </section>
