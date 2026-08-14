@@ -23,6 +23,8 @@ import {
   EyeOff,
   Copy,
   ExternalLink,
+  X,
+  Lock,
 } from "lucide-react";
 import { FaGithub } from "react-icons/fa";
 import { Badge } from "@/components/ui/Badge";
@@ -245,15 +247,15 @@ export default function DevRelAgent() {
             {/* User Personal PAT Button */}
             <button
               type="button"
-              onClick={() => setShowTokenInput(!showTokenInput)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono border transition-all ${
+              onClick={() => setShowTokenInput(true)}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-mono border shadow-sm transition-all cursor-pointer hover:shadow-md active:scale-95 ${
                 hasToken
-                  ? "bg-emerald-50 border-emerald-300 text-emerald-700"
-                  : "bg-slate-50 border-border text-slate-700 hover:bg-slate-100"
+                  ? "bg-emerald-50 border-emerald-300 text-emerald-700 font-semibold"
+                  : "bg-white border-border text-foreground hover:border-accent"
               }`}
             >
-              <Key className={`h-3.5 w-3.5 ${hasToken ? "text-emerald-600" : "text-slate-500"}`} />
-              <span>{hasToken ? "GitHub PAT Connected" : "Connect GitHub Token"}</span>
+              <Key className={`h-4 w-4 ${hasToken ? "text-emerald-600" : "text-accent"}`} />
+              <span>{hasToken ? "PAT Connected" : "Connect GitHub Token"}</span>
             </button>
 
             <a
@@ -269,45 +271,100 @@ export default function DevRelAgent() {
         </div>
       </header>
 
-      {/* GitHub Token Modal / Dropdown */}
+      {/* Centered GitHub Token Modal Dialog */}
       {showTokenInput && (
-        <div className="bg-slate-900 border-b border-slate-800 px-6 py-4 text-white">
-          <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-accent" />
-                <span className="font-semibold text-sm">Personal GitHub Access Token (PAT)</span>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-750 text-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-5 relative">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-accent/20 border border-accent/40 flex items-center justify-center text-accent">
+                  <Key className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-base text-white">GitHub Access Token (PAT)</h3>
+                  <p className="text-[11px] text-slate-400">Bring Your Own Key (BYOK) for Live PR Mode</p>
+                </div>
               </div>
-              <p className="text-xs text-slate-400">
-                Stored strictly in your local browser storage. Used to create forks, branches, and PRs under <strong>your own</strong> GitHub username.
-              </p>
+              <button
+                type="button"
+                onClick={() => setShowTokenInput(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
             </div>
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <div className="relative flex-1 md:w-80">
-                <input
-                  type={hideTokenSecret ? "password" : "text"}
-                  placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                  value={userGithubToken}
-                  onChange={(e) => handleTokenChange(e.target.value)}
-                  className="w-full text-xs font-mono px-3 py-2 rounded-lg bg-slate-950 border border-slate-750 text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent"
-                />
-                <button
-                  type="button"
-                  onClick={() => setHideTokenSecret(!hideTokenSecret)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                >
-                  {hideTokenSecret ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                </button>
+
+            {/* Modal Content */}
+            <div className="space-y-4 text-xs">
+              <p className="text-slate-300 leading-relaxed">
+                Connect your personal GitHub token to fork repositories, push branches, and open Pull Requests directly under <strong>your own GitHub username</strong>.
+              </p>
+
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between text-slate-400 font-mono text-[11px]">
+                  <span>Personal Access Token</span>
+                  <span className={hasToken ? "text-emerald-400 font-bold" : "text-amber-400"}>
+                    {hasToken ? "Valid Token Format" : "Optional (Preview Mode by Default)"}
+                  </span>
+                </div>
+                <div className="relative">
+                  <input
+                    type={hideTokenSecret ? "password" : "text"}
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    value={userGithubToken}
+                    onChange={(e) => handleTokenChange(e.target.value)}
+                    className="w-full text-xs font-mono px-3 py-2.5 rounded-lg bg-slate-900 border border-slate-700 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setHideTokenSecret(!hideTokenSecret)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    {hideTokenSecret ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
-              {hasToken && (
+
+              <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                <span>Requires <code>repo</code> and <code>workflow</code> permissions.</span>
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=repo,workflow&description=DevRel+Agent"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent hover:underline flex items-center gap-1 font-mono"
+                >
+                  <span>Generate on GitHub</span>
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              {userGithubToken ? (
                 <button
                   type="button"
-                  onClick={() => handleTokenChange("")}
-                  className="text-xs text-rose-400 hover:underline px-2"
+                  onClick={() => {
+                    handleTokenChange("");
+                  }}
+                  className="text-xs font-mono text-rose-400 hover:underline"
                 >
-                  Clear
+                  Disconnect Token
                 </button>
+              ) : (
+                <span className="text-[11px] text-slate-500 font-mono">Stored in browser localStorage</span>
               )}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="primary"
+                  onClick={() => setShowTokenInput(false)}
+                  className="px-5 py-2 text-xs"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  <span>Save &amp; Continue</span>
+                </Button>
+              </div>
             </div>
           </div>
         </div>
@@ -466,6 +523,24 @@ export default function DevRelAgent() {
                     <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                   </Button>
                 )}
+              </div>
+
+              {/* GitHub PAT Status Pill Trigger */}
+              <div className="flex items-center justify-between text-xs pt-1 text-muted-foreground">
+                <button
+                  type="button"
+                  onClick={() => setShowTokenInput(true)}
+                  className="inline-flex items-center gap-1.5 hover:text-accent transition-colors font-mono cursor-pointer"
+                >
+                  <Key className={`h-3.5 w-3.5 ${hasToken ? "text-emerald-500" : "text-amber-500"}`} />
+                  <span>
+                    {hasToken ? (
+                      <span className="text-emerald-700 font-semibold">GitHub PAT Connected (Live PR Mode)</span>
+                    ) : (
+                      <span className="text-amber-700 underline font-medium">Safe Preview Mode &bull; Click to connect GitHub PAT for live PRs</span>
+                    )}
+                  </span>
+                </button>
               </div>
 
               {/* Optional Review Inputs */}
