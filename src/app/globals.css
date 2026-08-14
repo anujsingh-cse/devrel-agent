@@ -48,6 +48,16 @@ body {
   background: linear-gradient(135deg, #0052FF 0%, #4D7CFF 100%);
 }
 
+.gradient-underline {
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, #0052FF 0%, #4D7CFF 100%);
+}
+
 .gradient-border-card {
   position: relative;
   border-radius: 0.75rem;
