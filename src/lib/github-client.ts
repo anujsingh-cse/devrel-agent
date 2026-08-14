@@ -28,12 +28,12 @@ export function parseGitHubUrl(url: string): ParsedGitHubUrl {
   };
 }
 
-export function getOctokit(): Octokit {
-  const token = process.env.GITHUB_TOKEN;
-  if (!token) {
-    throw new Error("GITHUB_TOKEN is missing in environment variables.");
+export function getOctokit(customToken?: string): Octokit {
+  const token = customToken?.trim() || process.env.GITHUB_TOKEN?.trim();
+  if (token) {
+    return new Octokit({ auth: token });
   }
-  return new Octokit({ auth: token.trim() });
+  return new Octokit();
 }
 
 export async function fetchFileTree(

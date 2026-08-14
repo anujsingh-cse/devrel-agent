@@ -3,6 +3,8 @@ export interface AgentRequestBody {
   mode?: "issue_fix" | "elite_pr_contributor";
   reviewComments?: string;
   ciLogs?: string;
+  userGithubToken?: string;
+  dryRun?: boolean;
 }
 
 export interface CommentAnalysis {
@@ -53,6 +55,8 @@ export interface FinalResultPayload {
   regressionTest: Phase3Result;
   diffAudit: Phase4Result;
   filesModified?: string[];
+  isDryRun?: boolean;
+  generatedCode?: { path: string; content: string }[];
 }
 
 export interface LogEvent {

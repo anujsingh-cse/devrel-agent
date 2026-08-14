@@ -39,8 +39,28 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { url, mode = "elite_pr_contributor", reviewComments, ciLogs } = body;
+  const {
+    url,
+    mode = "elite_pr_contributor",
+    reviewComments,
+    ciLogs,
+    userGithubToken,
+    dryRun,
+  } = body;
   const encoder = new TextEncoder();
+
+  // BYOK: Use visiting user's personal GitHub token if provided, or header
+  const userToken =
+    userGithubToken?.trim() ||
+    req.headers.get("x-github-token")?.trim() ||
+    undefined;
+  const hasUserToken = Boolean(
+    userToken &&
+      (userToken.startsWith("ghp_") || userToken.startsWith("github_pat_"))
+  );
+  // Default to safe preview / dry-run mode unless visiting user provided their own token
+  const isDryRun =
+    dryRun || (!hasUserToken && process.env.ALLOW_PUBLIC_SERVER_COMMITS !== "true");
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -68,11 +88,14 @@ export async function POST(req: NextRequest) {
 
         sendLog(
           "info",
-          `Parsed URL: Owner=${owner}, Repo=${repo}, ${isPR ? "PR" : "Issue"}=#${targetNumber} | Mode=${mode}`
+          `Target: ${owner}/${repo} #${targetNumber} | Mode=${mode} | Execution=${isDryRun ? "Safe Preview (Dry-Run)" : "Direct GitHub Push (User Auth)"}`
         );
 
-        const octokit = getOctokit();
-        sendLog("action", "Initialized AI inference pipeline with multi-model cascade & failover.");
+        const octokit = getOctokit(userToken);
+        sendLog(
+          "action",
+          `Initialized AI inference pipeline with NVIDIA NIM & GitHub Octokit (${hasUserToken ? "User Personal Token" : "Read-Only Sandbox"}).`
+        );
 
         // Fetch Issue / PR Details
         let itemTitle = "";
@@ -365,34 +388,13 @@ Respond in JSON: { "passed": boolean, "audit_notes": ["string"], "verdict": "str
         }
         sendLog("success", "Phase 6 Complete: 100% of review items satisfied with evidence.");
 
-        // --- PHASE 7: PR CREATION & ATOMIC COMMIT ---
-        sendLog("phase", "PHASE 7: PR CREATION — Pushing commits & creating Pull Request...");
-        const { targetOwner, defaultBranch } = await ensureForkAndBranch(
-          octokit,
-          owner,
-          repo,
-          branchName,
-          sendLog
+        // --- PHASE 7: PR CREATION & RESPONSE DRAFTING ---
+        sendLog(
+          "phase",
+          isDryRun
+            ? "PHASE 7: PR RESPONSE GENERATION (SAFE PREVIEW) — Drafting maintainer response & code diffs..."
+            : "PHASE 7: PR CREATION — Pushing commits & opening Pull Request under user account..."
         );
-
-        // Append regression test file to commit queue
-        const commitQueue: CommitFileItem[] = [...modifiedFiles];
-        if (phase3Data.test_file_name && phase3Data.test_code && phase3Data.test_code.length > 20) {
-          commitQueue.push({
-            path: phase3Data.test_file_name,
-            content: phase3Data.test_code,
-          });
-        }
-
-        await commitFilesMulti(
-          octokit,
-          targetOwner,
-          repo,
-          branchName,
-          commitMessage,
-          commitQueue
-        );
-        sendLog("success", `Committed ${commitQueue.length} file(s) to branch "${branchName}".`);
 
         // Generate natural PR description
         const phase7Prompt = `You are a senior open-source software engineer creating a Pull Request description on GitHub.
@@ -414,86 +416,133 @@ Write a clean, human-like PR description.
           .replace(/\n?```$/, "")
           .trim();
 
-        let prUrl = "";
-        if (isPR) {
-          prUrl = url;
-          try {
-            await octokit.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number: parseInt(targetNumber),
-              body: prResponseText,
-            });
-            sendLog("success", `Posted response comment to PR #${targetNumber}`);
-          } catch {
-            sendLog("info", "PR response drafted (comment post skipped due to token permission).");
-          }
-        } else {
-          const { data: user } = await octokit.rest.users.getAuthenticated();
-          const { data: createdPr } = await octokit.rest.pulls.create({
-            owner,
-            repo,
-            title: prTitle,
-            body: prResponseText,
-            head: targetOwner !== owner ? `${targetOwner}:${branchName}` : branchName,
-            base: defaultBranch,
-          });
-          prUrl = createdPr.html_url;
-          sendLog("success", `Pull Request opened: ${createdPr.html_url}`);
-        }
+        let prUrl = url;
 
-        // --- PHASE 8: CI MONITOR & AUTO-FIX LOOP ---
-        sendLog(
-          "phase",
-          "PHASE 8: CI MONITOR — Monitoring GitHub Actions checks with auto-remediation..."
-        );
-        let monitorPrNumber: number | null = isPR ? parseInt(targetNumber) : null;
-        if (!monitorPrNumber && prUrl) {
-          const m = prUrl.match(/\/pull\/(\d+)/);
-          if (m) monitorPrNumber = parseInt(m[1]);
-        }
-
-        if (monitorPrNumber) {
-          const filesToRemediate = [...targetFiles];
-          if (phase3Data.test_file_name && !filesToRemediate.includes(phase3Data.test_file_name)) {
-            filesToRemediate.push(phase3Data.test_file_name);
-          }
-
-          const remediationResult = await remediatePRChecks(
+        if (!isDryRun) {
+          const { targetOwner, defaultBranch } = await ensureForkAndBranch(
             octokit,
             owner,
             repo,
-            targetOwner,
             branchName,
-            monitorPrNumber,
-            filesToRemediate,
-            phase1Data.project_language || "typescript",
             sendLog
           );
 
-          if (remediationResult.success) {
-            sendLog(
-              "success",
-              `Phase 8 Complete: All ${remediationResult.totalChecks} GitHub Actions checks passed!`
-            );
-          } else {
-            sendLog(
-              "ci_status",
-              `Phase 8 Notice: ${remediationResult.failedChecks.length} checks still pending or failing (${remediationResult.failedChecks.join(
-                ", "
-              )}).`
-            );
+          // Append regression test file to commit queue
+          const commitQueue: CommitFileItem[] = [...modifiedFiles];
+          if (
+            phase3Data.test_file_name &&
+            phase3Data.test_code &&
+            phase3Data.test_code.length > 20
+          ) {
+            commitQueue.push({
+              path: phase3Data.test_file_name,
+              content: phase3Data.test_code,
+            });
           }
+
+          await commitFilesMulti(
+            octokit,
+            targetOwner,
+            repo,
+            branchName,
+            commitMessage,
+            commitQueue
+          );
+          sendLog("success", `Committed ${commitQueue.length} file(s) to branch "${branchName}".`);
+
+          if (isPR) {
+            prUrl = url;
+            try {
+              await octokit.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: parseInt(targetNumber),
+                body: prResponseText,
+              });
+              sendLog("success", `Posted response comment to PR #${targetNumber}`);
+            } catch {
+              sendLog("info", "PR response drafted (comment post skipped due to token scope).");
+            }
+          } else {
+            const { data: createdPr } = await octokit.rest.pulls.create({
+              owner,
+              repo,
+              title: prTitle,
+              body: prResponseText,
+              head: targetOwner !== owner ? `${targetOwner}:${branchName}` : branchName,
+              base: defaultBranch,
+            });
+            prUrl = createdPr.html_url;
+            sendLog("success", `Pull Request opened: ${createdPr.html_url}`);
+          }
+
+          // --- PHASE 8: CI MONITOR & AUTO-FIX LOOP ---
+          sendLog(
+            "phase",
+            "PHASE 8: CI MONITOR — Monitoring GitHub Actions checks with auto-remediation..."
+          );
+          let monitorPrNumber: number | null = isPR ? parseInt(targetNumber) : null;
+          if (!monitorPrNumber && prUrl) {
+            const m = prUrl.match(/\/pull\/(\d+)/);
+            if (m) monitorPrNumber = parseInt(m[1]);
+          }
+
+          if (monitorPrNumber) {
+            const filesToRemediate = [...targetFiles];
+            if (
+              phase3Data.test_file_name &&
+              !filesToRemediate.includes(phase3Data.test_file_name)
+            ) {
+              filesToRemediate.push(phase3Data.test_file_name);
+            }
+
+            const remediationResult = await remediatePRChecks(
+              octokit,
+              owner,
+              repo,
+              targetOwner,
+              branchName,
+              monitorPrNumber,
+              filesToRemediate,
+              phase1Data.project_language || "typescript",
+              sendLog
+            );
+
+            if (remediationResult.success) {
+              sendLog(
+                "success",
+                `Phase 8 Complete: All ${remediationResult.totalChecks} GitHub Actions checks passed!`
+              );
+            } else {
+              sendLog(
+                "ci_status",
+                `Phase 8 Notice: ${remediationResult.failedChecks.length} checks still pending or failing (${remediationResult.failedChecks.join(
+                  ", "
+                )}).`
+              );
+            }
+          }
+        } else {
+          sendLog(
+            "success",
+            "Phase 7 Complete (Preview): Code solution and PR markdown ready. Git commit skipped (no personal token provided)."
+          );
+          sendLog(
+            "info",
+            "To push PR directly to GitHub from your account, enter your GitHub PAT in Settings."
+          );
         }
 
         // Send Final Result
-        sendLog("result", "DevRel Autonomous Contributor Workflow Completed Successfully!", {
-          prUrl: prUrl || url,
+        sendLog("result", "DevRel Contributor Workflow Completed Successfully!", {
+          prUrl,
           satisfactionMatrix,
           prResponseText,
           regressionTest: phase3Data,
           diffAudit: phase4Data,
           filesModified: targetFiles,
+          isDryRun,
+          generatedCode: modifiedFiles.map((f) => ({ path: f.path, content: f.content })),
         });
 
         controller.close();

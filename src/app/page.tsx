@@ -18,6 +18,11 @@ import {
   RotateCcw,
   Check,
   FileCode,
+  Key,
+  Eye,
+  EyeOff,
+  Copy,
+  ExternalLink,
 } from "lucide-react";
 import { FaGithub } from "react-icons/fa";
 import { Badge } from "@/components/ui/Badge";
@@ -59,6 +64,9 @@ const PIPELINE_PHASES = [
 export default function DevRelAgent() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [issueUrl, setIssueUrl] = useState("");
+  const [userGithubToken, setUserGithubToken] = useState("");
+  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [hideTokenSecret, setHideTokenSecret] = useState(true);
   const [agentMode, setAgentMode] = useState<"elite_pr_contributor" | "issue_fix">(
     "elite_pr_contributor"
   );
@@ -70,10 +78,33 @@ export default function DevRelAgent() {
   const [finalResult, setFinalResult] = useState<FinalResultPayload | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [copiedResponse, setCopiedResponse] = useState(false);
+  const [selectedFileIdx, setSelectedFileIdx] = useState(0);
+  const [copiedCode, setCopiedCode] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const logIdRef = useRef(0);
   const logsEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Load user GitHub token from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("devrel_user_gh_token");
+      if (saved) setUserGithubToken(saved);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Save token change to localStorage
+  const handleTokenChange = (val: string) => {
+    setUserGithubToken(val);
+    try {
+      if (val) localStorage.setItem("devrel_user_gh_token", val.trim());
+      else localStorage.removeItem("devrel_user_gh_token");
+    } catch {
+      // ignore
+    }
+  };
 
   // Auto-scroll logs to bottom
   useEffect(() => {
@@ -123,6 +154,7 @@ export default function DevRelAgent() {
           mode: agentMode,
           reviewComments,
           ciLogs,
+          userGithubToken: userGithubToken.trim() || undefined,
         }),
         signal: controller.signal,
       });
@@ -139,7 +171,7 @@ export default function DevRelAgent() {
 
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split("\n\n");
-        buffer = events.pop() || ""; // Retain incomplete trailing chunk
+        buffer = events.pop() || "";
 
         for (const event of events) {
           const trimmed = event.trim();
@@ -148,7 +180,6 @@ export default function DevRelAgent() {
               const data = JSON.parse(trimmed.substring(6));
               const id = `log-${++logIdRef.current}`;
 
-              // Detect active phase from log stream
               if (data.type === "phase" && typeof data.text === "string") {
                 const phaseMatch = data.text.match(/PHASE\s+(\d+)/i);
                 if (phaseMatch) {
@@ -189,7 +220,12 @@ export default function DevRelAgent() {
       setIsRunning(false);
       abortRef.current = null;
     }
-  }, [issueUrl, agentMode, reviewComments, ciLogs, isRunning]);
+  }, [issueUrl, agentMode, reviewComments, ciLogs, isRunning, userGithubToken]);
+
+  const hasToken = Boolean(
+    userGithubToken &&
+      (userGithubToken.startsWith("ghp_") || userGithubToken.startsWith("github_pat_"))
+  );
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans relative selection:bg-accent selection:text-white">
@@ -205,7 +241,21 @@ export default function DevRelAgent() {
             </span>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* User Personal PAT Button */}
+            <button
+              type="button"
+              onClick={() => setShowTokenInput(!showTokenInput)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono border transition-all ${
+                hasToken
+                  ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                  : "bg-slate-50 border-border text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <Key className={`h-3.5 w-3.5 ${hasToken ? "text-emerald-600" : "text-slate-500"}`} />
+              <span>{hasToken ? "GitHub PAT Connected" : "Connect GitHub Token"}</span>
+            </button>
+
             <a
               href="https://github.com/anujsinghcse"
               target="_blank"
@@ -213,20 +263,55 @@ export default function DevRelAgent() {
               className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
               <FaGithub className="h-5 w-5" />
-              <span>GitHub</span>
+              <span className="hidden sm:inline">GitHub</span>
             </a>
-            <Button
-              variant="outline"
-              onClick={() => {
-                const webhookInfo = "Webhook endpoint available at: /api/webhook\nConfigure in GitHub Repo Settings -> Webhooks";
-                alert(webhookInfo);
-              }}
-            >
-              Webhook Setup
-            </Button>
           </div>
         </div>
       </header>
+
+      {/* GitHub Token Modal / Dropdown */}
+      {showTokenInput && (
+        <div className="bg-slate-900 border-b border-slate-800 px-6 py-4 text-white">
+          <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-accent" />
+                <span className="font-semibold text-sm">Personal GitHub Access Token (PAT)</span>
+              </div>
+              <p className="text-xs text-slate-400">
+                Stored strictly in your local browser storage. Used to create forks, branches, and PRs under <strong>your own</strong> GitHub username.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <div className="relative flex-1 md:w-80">
+                <input
+                  type={hideTokenSecret ? "password" : "text"}
+                  placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                  value={userGithubToken}
+                  onChange={(e) => handleTokenChange(e.target.value)}
+                  className="w-full text-xs font-mono px-3 py-2 rounded-lg bg-slate-950 border border-slate-750 text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent"
+                />
+                <button
+                  type="button"
+                  onClick={() => setHideTokenSecret(!hideTokenSecret)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                >
+                  {hideTokenSecret ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+              {hasToken && (
+                <button
+                  type="button"
+                  onClick={() => handleTokenChange("")}
+                  className="text-xs text-rose-400 hover:underline px-2"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hero Section */}
       <section className="relative py-12 lg:py-20 px-6 overflow-hidden">
@@ -240,7 +325,18 @@ export default function DevRelAgent() {
         >
           {/* Left Column: Hero Text & Controls */}
           <motion.div variants={fadeInUp} className="space-y-6">
-            <Badge pulse>Elite Autonomous PR Engine</Badge>
+            <div className="flex items-center gap-2">
+              <Badge pulse>Autonomous Contributor Engine</Badge>
+              {hasToken ? (
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-mono font-medium border border-emerald-200">
+                  Live Mode (Your GitHub Auth)
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[11px] font-mono font-medium border border-amber-200">
+                  Safe Preview Mode (Zero Risk)
+                </span>
+              )}
+            </div>
 
             <h1 className="font-serif text-4xl sm:text-5xl lg:text-[4.2rem] leading-[1.05] tracking-tight text-foreground">
               The Open-Source <br />
@@ -251,7 +347,7 @@ export default function DevRelAgent() {
             </h1>
 
             <p className="text-base md:text-lg text-muted-foreground leading-relaxed max-w-xl">
-              From issue triage to merged code. Executes an 8-phase autonomous pipeline: Review Analysis, Multi-file Transform, Regression Suite, Self-Audit, CI Compliance, Satisfaction Matrix, PR Drafting, and Live CI Remediation.
+              From issue triage to merged code. Executes an 8-phase pipeline with NVIDIA NIM reasoning, multi-file atomic diffs, regression test synthesis, and live CI auto-remediation.
             </p>
 
             {/* Pipeline Step Indicator */}
@@ -425,16 +521,16 @@ export default function DevRelAgent() {
               </div>
               <div className="h-8 w-px bg-border" />
               <div>
-                <div className="font-serif text-2xl font-bold text-accent">Multi-File</div>
+                <div className="font-serif text-2xl font-bold text-accent">NVIDIA NIM</div>
                 <div className="font-mono text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">
-                  Atomic Tree Commits
+                  Llama 3.1 &amp; Nemotron
                 </div>
               </div>
               <div className="h-8 w-px bg-border" />
               <div>
-                <div className="font-serif text-2xl font-bold text-emerald-600">Auto-Fix</div>
+                <div className="font-serif text-2xl font-bold text-emerald-600">BYOK Auth</div>
                 <div className="font-mono text-[11px] text-muted-foreground uppercase tracking-wider mt-0.5">
-                  CI Actions Loop
+                  Your Account Only
                 </div>
               </div>
             </div>
@@ -454,7 +550,7 @@ export default function DevRelAgent() {
                 </div>
                 <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
                   <TerminalIcon className="h-3.5 w-3.5 text-[#0052FF]" />
-                  <span>devrel-autonomous-agent</span>
+                  <span>devrel-agent-v2</span>
                 </div>
                 <span
                   className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[10px] uppercase ${
@@ -556,12 +652,23 @@ export default function DevRelAgent() {
           <div className="max-w-6xl mx-auto space-y-8">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
-                <Badge pulse={false}>Verification Matrix &amp; Artifacts</Badge>
+                <div className="flex items-center gap-2">
+                  <Badge pulse={false}>Verification Matrix &amp; Artifacts</Badge>
+                  {finalResult.isDryRun ? (
+                    <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono text-[11px] font-bold border border-amber-500/30">
+                      Safe Preview Mode
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[11px] font-bold border border-emerald-500/30">
+                      PR Opened Live on GitHub
+                    </span>
+                  )}
+                </div>
                 <h2 className="font-serif text-3xl text-white mt-2">
                   Maintainer Satisfaction Matrix &amp; PR Response
                 </h2>
               </div>
-              {finalResult.prUrl && (
+              {finalResult.prUrl && !finalResult.isDryRun && (
                 <a
                   href={finalResult.prUrl}
                   target="_blank"
@@ -574,21 +681,62 @@ export default function DevRelAgent() {
               )}
             </div>
 
-            {/* Modified Files Chips */}
-            {finalResult.filesModified && finalResult.filesModified.length > 0 && (
-              <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 flex items-center gap-3 flex-wrap">
-                <span className="text-xs font-mono text-slate-400 flex items-center gap-1.5">
-                  <FileCode className="h-4 w-4 text-accent" />
-                  Files Transformed:
-                </span>
-                {finalResult.filesModified.map((file, idx) => (
-                  <span
-                    key={idx}
-                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-cyan-300 font-mono text-xs"
+            {/* Generated Code Files (Dry Run or Direct Inspection) */}
+            {finalResult.generatedCode && finalResult.generatedCode.length > 0 && (
+              <div className="p-5 rounded-xl border border-slate-800 bg-slate-950 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <FileCode className="h-4 w-4 text-cyan-400" />
+                    <span className="font-mono text-xs text-slate-300 font-semibold uppercase">
+                      Generated Code Transformations ({finalResult.generatedCode.length} files)
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const activeCode = finalResult.generatedCode?.[selectedFileIdx]?.content || "";
+                      navigator.clipboard.writeText(activeCode);
+                      setCopiedCode(true);
+                      setTimeout(() => setCopiedCode(false), 2000);
+                    }}
+                    className="text-xs text-accent hover:underline font-mono flex items-center gap-1"
                   >
-                    {file}
-                  </span>
-                ))}
+                    {copiedCode ? (
+                      <>
+                        <Check className="h-3.5 w-3.5 text-emerald-400" />
+                        <span className="text-emerald-400">Copied File!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3.5 w-3.5" />
+                        <span>Copy Active File</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* File Tabs */}
+                <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                  {finalResult.generatedCode.map((f, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setSelectedFileIdx(idx)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-all shrink-0 ${
+                        selectedFileIdx === idx
+                          ? "bg-slate-800 text-cyan-300 border border-cyan-700/50 font-bold"
+                          : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
+                      }`}
+                    >
+                      {f.path}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Active Code Viewer */}
+                <pre className="font-mono text-xs text-slate-300 whitespace-pre-wrap leading-relaxed bg-slate-900 p-4 rounded-lg border border-slate-850 max-h-72 overflow-y-auto scrollbar-thin">
+                  {finalResult.generatedCode[selectedFileIdx]?.content || ""}
+                </pre>
               </div>
             )}
 
@@ -663,49 +811,49 @@ export default function DevRelAgent() {
       <section className="py-24 px-6 bg-muted/50 border-y border-border">
         <div className="max-w-6xl mx-auto space-y-16">
           <div className="text-center max-w-2xl mx-auto space-y-4">
-            <Badge pulse={false}>Autonomous Architecture</Badge>
+            <Badge pulse={false}>Secure Multi-Tenant Architecture</Badge>
             <h2 className="font-serif text-4xl sm:text-5xl text-foreground">
-              Built for Hands-Off Engineering Workflows
+              Built with Strict Permission Isolation
             </h2>
             <p className="text-muted-foreground">
-              Autonomous webhook dispatch, multi-file atomic git tree synthesis, and continuous CI polling with auto-remediation.
+              Zero unauthorized commits. Safe dry-run previews by default, or connect your personal GitHub token to publish directly under your account.
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <Card variant="gradient-border">
               <div className="w-12 h-12 rounded-xl gradient-bg flex items-center justify-center text-white mb-6 shadow-accent">
-                <GitPullRequest className="h-6 w-6" />
-              </div>
-              <h3 className="font-sans font-semibold text-xl text-foreground mb-2">
-                Multi-File Fix Generation
-              </h3>
-              <p className="text-muted-foreground text-sm leading-relaxed">
-                Parses bug context across full repositories, applies coordinated transformations across multiple source files, and creates clean atomic commits.
-              </p>
-            </Card>
-
-            <Card variant="standard">
-              <div className="w-12 h-12 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent mb-6">
-                <GitMerge className="h-6 w-6" />
-              </div>
-              <h3 className="font-sans font-semibold text-xl text-foreground mb-2">
-                Autonomous Webhooks
-              </h3>
-              <p className="text-muted-foreground text-sm leading-relaxed">
-                Connects directly to GitHub repo webhooks to auto-trigger fixes on issue creation or changes-requested PR reviews without manual intervention.
-              </p>
-            </Card>
-
-            <Card variant="standard">
-              <div className="w-12 h-12 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent mb-6">
                 <ShieldCheck className="h-6 w-6" />
               </div>
               <h3 className="font-sans font-semibold text-xl text-foreground mb-2">
-                CI Feedback Auto-Fix
+                Zero Server Account Hijacking
               </h3>
               <p className="text-muted-foreground text-sm leading-relaxed">
-                Monitors GitHub Actions check runs after PR creation, analyzes failure logs in real time, and pushes corrective commits until green.
+                Server owner GitHub credentials are strictly read-only for public triage. PR creation requires visiting user authentication.
+              </p>
+            </Card>
+
+            <Card variant="standard">
+              <div className="w-12 h-12 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent mb-6">
+                <GitPullRequest className="h-6 w-6" />
+              </div>
+              <h3 className="font-sans font-semibold text-xl text-foreground mb-2">
+                Safe Preview Sandbox
+              </h3>
+              <p className="text-muted-foreground text-sm leading-relaxed">
+                Generates full multi-file code fixes, regression tests, and PR copy without pushing any branches or opening unapproved PRs.
+              </p>
+            </Card>
+
+            <Card variant="standard">
+              <div className="w-12 h-12 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent mb-6">
+                <Key className="h-6 w-6" />
+              </div>
+              <h3 className="font-sans font-semibold text-xl text-foreground mb-2">
+                BYOK User GitHub PAT
+              </h3>
+              <p className="text-muted-foreground text-sm leading-relaxed">
+                Connect your personal GitHub PAT to automatically create forks, push branches, and open verified PRs under your own profile.
               </p>
             </Card>
           </div>
