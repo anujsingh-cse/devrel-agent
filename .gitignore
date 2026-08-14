@@ -23,6 +23,12 @@
 # misc
 .DS_Store
 *.pem
+*.key
+*.cert
+*.crt
+*.pfx
+credentials.json
+
 
 # debug
 npm-debug.log*

@@ -2,6 +2,8 @@ import { Octokit } from "@octokit/rest";
 import { generateAIText } from "./ai-providers";
 import { fetchFileContent, commitFilesMulti, CommitFileItem } from "./github-client";
 import { LoggerFn } from "./ai-providers";
+import { sanitizeForPrompt } from "./validation";
+
 
 export interface CIRemediationResult {
   success: boolean;
@@ -214,13 +216,14 @@ export async function remediatePRChecks(
           branchName
         );
 
+        const sanitizedLogs = sanitizeForPrompt(extractedErrorLogs, 6000);
         const remediationPrompt = `You are an elite open-source contributor fixing CI test / build failures on Pull Request #${prNumber}.
 Language: ${projectLanguage}
 File: ${filePath}
 Remediation Attempt: ${remediationCycle + 1}/${MAX_REMEDIATION_CYCLES}
 
 CI FAILURE TRACEBACK & LOGS:
-${extractedErrorLogs.slice(0, 7000)}
+${sanitizedLogs}
 
 CURRENT FILE CONTENT:
 ${currentFileCode}
@@ -230,6 +233,7 @@ CRITICAL RULES:
 2. DO NOT introduce breaking changes or delete needed tests.
 3. If test file itself is failing due to invalid imports or wrong test framework mocks, fix the test logic to match repository standards.
 4. Output ONLY the raw complete updated code for ${filePath}. No markdown code blocks, no chat.`;
+
 
         let remediatedCode = await generateAIText(remediationPrompt, false, log);
         remediatedCode = remediatedCode

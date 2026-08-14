@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { constantTimeCompare } from "@/lib/auth";
+
+const MAX_WEBHOOK_BODY_BYTES = 5 * 1024 * 1024; // 5MB limit
 
 export async function POST(req: NextRequest) {
   try {
@@ -7,20 +10,53 @@ export async function POST(req: NextRequest) {
     const event = req.headers.get("x-github-event");
     const secret = process.env.GITHUB_WEBHOOK_SECRET;
 
-    const rawBody = await req.text();
-
-    // Verify webhook signature if secret is configured
-    if (secret && signature) {
-      const expectedSignature = `sha256=${crypto
-        .createHmac("sha256", secret)
-        .update(rawBody)
-        .digest("hex")}`;
-      if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-        return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-      }
+    // Reject immediately if webhook secret is not configured to prevent unauthenticated trigger
+    if (!secret) {
+      return NextResponse.json(
+        {
+          error:
+            "Webhook secret not configured on server. Set GITHUB_WEBHOOK_SECRET in .env.local to enable webhooks.",
+        },
+        { status: 503 }
+      );
     }
 
-    const payload = JSON.parse(rawBody);
+    if (!signature) {
+      return NextResponse.json(
+        { error: "Missing x-hub-signature-256 header." },
+        { status: 401 }
+      );
+    }
+
+    // Limit body read size
+    const rawBody = await req.text();
+    if (rawBody.length > MAX_WEBHOOK_BODY_BYTES) {
+      return NextResponse.json({ error: "Payload too large." }, { status: 413 });
+    }
+
+    // Verify HMAC-SHA256 signature using constant-time comparison
+    const expectedSignature = `sha256=${crypto
+      .createHmac("sha256", secret)
+      .update(rawBody)
+      .digest("hex")}`;
+
+    if (!constantTimeCompare(signature, expectedSignature)) {
+      return NextResponse.json({ error: "Invalid webhook signature." }, { status: 401 });
+    }
+
+    let payload: Record<string, any>;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
+    }
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const agentApiKey = process.env.DEVREL_AGENT_API_KEY;
+    const internalHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(agentApiKey ? { "x-api-key": agentApiKey } : {}),
+    };
 
     // 1. Issue Created Event
     if (event === "issues" && (payload.action === "opened" || payload.action === "labeled")) {
@@ -32,11 +68,10 @@ export async function POST(req: NextRequest) {
         );
 
       if (issueUrl && isDevRelTrigger) {
-        // Trigger agent execution in background (fire-and-forget or internal fetch)
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+        // Trigger agent execution
         fetch(`${appUrl}/api/agent`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: internalHeaders,
           body: JSON.stringify({
             url: issueUrl,
             mode: "issue_fix",
@@ -58,10 +93,9 @@ export async function POST(req: NextRequest) {
       const reviewState = payload.review?.state;
 
       if (prUrl && reviewState === "changes_requested") {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
         fetch(`${appUrl}/api/agent`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: internalHeaders,
           body: JSON.stringify({
             url: prUrl,
             mode: "elite_pr_contributor",
@@ -77,9 +111,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ status: "ignored", event });
+    return NextResponse.json({ status: "ignored", event: event || "unknown" });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown webhook error";
+    const message = err instanceof Error ? err.message : "Internal webhook error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

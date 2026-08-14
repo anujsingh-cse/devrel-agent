@@ -85,26 +85,32 @@ export default function DevRelAgent() {
   const logIdRef = useRef(0);
   const logsEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Load user GitHub token from localStorage on mount
+  // Load user GitHub token from sessionStorage on mount (clears legacy localStorage)
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("devrel_user_gh_token");
-      if (saved) setUserGithubToken(saved);
+      const saved = sessionStorage.getItem("devrel_user_gh_token");
+      if (saved) {
+        setUserGithubToken(saved);
+      }
+      // Purge any legacy token from persistent localStorage
+      localStorage.removeItem("devrel_user_gh_token");
     } catch {
       // ignore
     }
   }, []);
 
-  // Save token change to localStorage
+  // Save token change to sessionStorage
   const handleTokenChange = (val: string) => {
     setUserGithubToken(val);
     try {
-      if (val) localStorage.setItem("devrel_user_gh_token", val.trim());
-      else localStorage.removeItem("devrel_user_gh_token");
+      if (val) sessionStorage.setItem("devrel_user_gh_token", val.trim());
+      else sessionStorage.removeItem("devrel_user_gh_token");
+      localStorage.removeItem("devrel_user_gh_token");
     } catch {
       // ignore
     }
   };
+
 
   // Auto-scroll logs to bottom
   useEffect(() => {
@@ -373,8 +379,9 @@ export default function DevRelAgent() {
                   Disconnect Token
                 </button>
               ) : (
-                <span className="text-[11px] text-slate-500 font-mono">Stored in browser localStorage</span>
+                <span className="text-[11px] text-slate-500 font-mono">Stored in current browser session only</span>
               )}
+
               <div className="flex items-center gap-2">
                 <Button
                   variant="primary"

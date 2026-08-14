@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateApiAccess } from "@/lib/auth";
 import { runPRMergerLoop } from "@/lib/pr-merger-agent";
 import { LogType } from "@/lib/types";
+import { PRMergerRequestSchema } from "@/lib/validation";
 
 export async function POST(req: NextRequest) {
   const auth = validateApiAccess(req);
@@ -12,27 +13,25 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: {
-    prUrl: string;
-    userGithubToken?: string;
-    maxCycles?: number;
-    autoMergeIfReady?: boolean;
-  };
-
+  let rawJson: unknown;
   try {
-    body = await req.json();
+    rawJson = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid request JSON" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request JSON." }, { status: 400 });
   }
 
-  const { prUrl, userGithubToken, maxCycles = 5, autoMergeIfReady = true } = body;
-  if (!prUrl) {
-    return NextResponse.json({ error: "prUrl is required" }, { status: 400 });
+  const parsedBody = PRMergerRequestSchema.safeParse(rawJson);
+  if (!parsedBody.success) {
+    const errorMsg = parsedBody.error.issues.map((i) => i.message).join(", ");
+    return NextResponse.json({ error: `Validation Error: ${errorMsg}` }, { status: 400 });
   }
+
+  const { prUrl, userGithubToken, maxCycles = 5, autoMergeIfReady = true } = parsedBody.data;
 
   const encoder = new TextEncoder();
   const userToken =
     userGithubToken?.trim() || req.headers.get("x-github-token")?.trim() || undefined;
+
 
   const stream = new ReadableStream({
     async start(controller) {

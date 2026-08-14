@@ -1,5 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import { LoggerFn } from "./ai-providers";
+import { validateAndParseGitHubUrl } from "./validation";
 
 export interface ParsedGitHubUrl {
   owner: string;
@@ -9,24 +10,9 @@ export interface ParsedGitHubUrl {
 }
 
 export function parseGitHubUrl(url: string): ParsedGitHubUrl {
-  if (!url || !url.includes("github.com")) {
-    throw new Error("Invalid GitHub URL.");
-  }
-  const issueMatch = url.match(/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)/);
-  const prMatch = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
-
-  if (!issueMatch && !prMatch) {
-    throw new Error("Could not parse owner, repo, and issue/PR number from URL.");
-  }
-
-  const isPR = Boolean(prMatch);
-  return {
-    owner: isPR ? prMatch![1] : issueMatch![1],
-    repo: isPR ? prMatch![2] : issueMatch![2],
-    targetNumber: isPR ? prMatch![3] : issueMatch![3],
-    isPR,
-  };
+  return validateAndParseGitHubUrl(url);
 }
+
 
 export function getOctokit(customToken?: string): Octokit {
   const token = customToken?.trim() || process.env.GITHUB_TOKEN?.trim();

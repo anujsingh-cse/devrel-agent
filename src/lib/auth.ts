@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import crypto from "crypto";
 
 interface RateLimitRecord {
   count: number;
@@ -9,12 +10,40 @@ interface RateLimitRecord {
 const ipRequestMap = new Map<string, RateLimitRecord>();
 
 const WINDOW_MS = 10 * 60 * 1000; // 10 minutes window
-const MAX_REQUESTS_PER_WINDOW = 10; // Max 10 runs per IP per 10 mins
+const MAX_REQUESTS_PER_WINDOW = 15; // Max 15 runs per IP per 10 mins
+const MAX_MAP_SIZE = 1000;
 
 export interface AuthValidationResult {
   allowed: boolean;
   status: number;
   reason?: string;
+}
+
+/**
+ * Constant-time string equality check to prevent timing attacks.
+ */
+export function constantTimeCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+
+  if (bufA.length !== bufB.length) {
+    // Perform dummy comparison to preserve timing consistency
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+/**
+ * Evicts expired IP rate limit records to prevent memory leaks.
+ */
+function cleanupExpiredRateLimits(now: number) {
+  for (const [ip, record] of ipRequestMap.entries()) {
+    if (now > record.resetAt) {
+      ipRequestMap.delete(ip);
+    }
+  }
 }
 
 export function validateApiAccess(req: NextRequest): AuthValidationResult {
@@ -25,7 +54,7 @@ export function validateApiAccess(req: NextRequest): AuthValidationResult {
       req.headers.get("x-api-key") ||
       req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
 
-    if (!providedKey || providedKey !== configuredSecret) {
+    if (!providedKey || !constantTimeCompare(providedKey, configuredSecret)) {
       return {
         allowed: false,
         status: 401,
@@ -34,12 +63,11 @@ export function validateApiAccess(req: NextRequest): AuthValidationResult {
     }
   }
 
-  // 2. Origin & Host validation in production
+  // 2. Origin & Host validation in production (CSRF mitigation on API routes)
   const origin = req.headers.get("origin");
   const host = req.headers.get("host");
   const referer = req.headers.get("referer");
 
-  // In production, block cross-site forged POST requests
   if (process.env.NODE_ENV === "production" && host) {
     if (origin) {
       const originHost = origin.replace(/^https?:\/\//, "");
@@ -62,13 +90,22 @@ export function validateApiAccess(req: NextRequest): AuthValidationResult {
     }
   }
 
-  // 3. In-memory Rate Limiting per IP
-  const ip =
+  // 3. In-memory Rate Limiting per IP with leak prevention
+  const now = Date.now();
+
+  // Prune map periodically when it grows
+  if (ipRequestMap.size > MAX_MAP_SIZE) {
+    cleanupExpiredRateLimits(now);
+  }
+
+  const rawIp =
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     req.headers.get("x-real-ip") ||
     "127.0.0.1";
 
-  const now = Date.now();
+  // Sanitize IP key to prevent prototype pollution or map key attacks
+  const ip = String(rawIp).slice(0, 45);
+
   const record = ipRequestMap.get(ip);
 
   if (!record || now > record.resetAt) {

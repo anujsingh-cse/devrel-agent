@@ -18,6 +18,7 @@ import {
   SatisfactionItem,
 } from "@/lib/types";
 import { remediatePRChecks } from "@/lib/ci-remediator";
+import { AgentRequestSchema, sanitizeForPrompt } from "@/lib/validation";
 
 export async function POST(req: NextRequest) {
   // Validate Auth, Origin & In-memory Rate Limit
@@ -29,14 +30,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: AgentRequestBody;
+  let rawJson: unknown;
   try {
-    body = await req.json();
+    rawJson = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return NextResponse.json({ error: "Invalid request JSON." }, { status: 400 });
+  }
+
+  const parsedBody = AgentRequestSchema.safeParse(rawJson);
+  if (!parsedBody.success) {
+    const errorMsg = parsedBody.error.issues.map((i) => i.message).join(", ");
+    return NextResponse.json({ error: `Validation Error: ${errorMsg}` }, { status: 400 });
   }
 
   const {
@@ -46,7 +50,7 @@ export async function POST(req: NextRequest) {
     ciLogs,
     userGithubToken,
     dryRun,
-  } = body;
+  } = parsedBody.data;
   const encoder = new TextEncoder();
 
   // BYOK: Use visiting user's personal GitHub token if provided, or header
@@ -61,6 +65,7 @@ export async function POST(req: NextRequest) {
   // Default to safe preview / dry-run mode unless visiting user provided their own token
   const isDryRun =
     dryRun || (!hasUserToken && process.env.ALLOW_PUBLIC_SERVER_COMMITS !== "true");
+
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -158,11 +163,12 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        sendLog("success", `Loaded ${isPR ? "PR" : "Issue"} #${targetNumber}: "${itemTitle}"`);
-
-        const combinedReviewComments = [reviewComments, fetchedCommentsText]
-          .filter(Boolean)
-          .join("\n\n");
+        const sanitizedReviewComments = sanitizeForPrompt(
+          [reviewComments, fetchedCommentsText].filter(Boolean).join("\n\n"),
+          10000
+        );
+        const sanitizedCiLogs = sanitizeForPrompt(ciLogs || "", 10000);
+        const sanitizedItemBody = sanitizeForPrompt(itemBody, 6000);
 
         sendLog("info", "Scanning repository file tree...");
         const files = await fetchFileTree(octokit, owner, repo);
@@ -179,11 +185,12 @@ export async function POST(req: NextRequest) {
         );
         const phase1Prompt = `You are an elite open-source contributor agent performing Phase 1: Review Analysis & Multi-file identification.
 Target Item: ${itemTitle}
-Body: ${itemBody}
-Maintainer Feedback: ${combinedReviewComments || "Resolve requirements and fix tests."}
-CI Failures / Test Logs: ${ciLogs || "None provided explicitly. Code must pass all tests."}
+Body: ${sanitizedItemBody}
+Maintainer Feedback: ${sanitizedReviewComments || "Resolve requirements and fix tests."}
+CI Failures / Test Logs: ${sanitizedCiLogs || "None provided explicitly. Code must pass all tests."}
 Available Repository Files:
 ${filesString}
+
 
 Analyze all review comments, CI test failure traces, and file tree.
 1. Determine primary project language ("typescript", "javascript", "python", "go", "rust", etc.).
