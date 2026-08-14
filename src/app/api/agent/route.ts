@@ -17,6 +17,7 @@ import {
   Phase4Result,
   SatisfactionItem,
 } from "@/lib/types";
+import { remediatePRChecks } from "@/lib/ci-remediator";
 
 export async function POST(req: NextRequest) {
   // Validate Auth, Origin & In-memory Rate Limit
@@ -263,18 +264,31 @@ Rules:
           `PHASE 3: REGRESSION TESTING — Generating test suite for ${phase1Data.project_language}...`
         );
         const defaultTestName =
-          phase1Data.test_file_paths?.[0] ||
+          phase1Data.test_file_paths?.find((p) => files.includes(p)) ||
+          files.find((f) => f.includes(".test.") || f.includes(".spec.") || f.startsWith("tests/test_") || f.endsWith("_test.go")) ||
           (phase1Data.project_language === "python"
             ? "tests/test_regression.py"
             : "src/__tests__/regression.test.ts");
 
+        let existingTestSample = "";
+        if (files.includes(defaultTestName)) {
+          try {
+            const { content } = await fetchFileContent(octokit, owner, repo, defaultTestName);
+            existingTestSample = content.slice(0, 1500);
+          } catch {
+            // ignore
+          }
+        }
+
         const phase3Prompt = `You are an elite open-source contributor creating Phase 3 regression tests.
 Language: ${phase1Data.project_language}
 Target Files: ${targetFiles.join(", ")}
+Existing Test File Example: ${defaultTestName}
+${existingTestSample ? `Existing Test File Code Pattern:\n${existingTestSample}\n` : ""}
 Review Items: ${JSON.stringify(phase1Data.comments_analysis)}
 CI Logs: ${ciLogs || "None"}
 
-Generate complete regression tests covering edge cases.
+Generate complete regression tests matching the existing test framework, assertions, and import style of the repository!
 Respond in strict JSON:
 {
   "test_framework": "jest" | "vitest" | "pytest" | "go_test" | "other",
@@ -440,60 +454,35 @@ Write a clean, human-like PR description.
         }
 
         if (monitorPrNumber) {
-          const MAX_RETRIES = 3;
-          let retryCount = 0;
-          let allPassed = false;
+          const filesToRemediate = [...targetFiles];
+          if (phase3Data.test_file_name && !filesToRemediate.includes(phase3Data.test_file_name)) {
+            filesToRemediate.push(phase3Data.test_file_name);
+          }
 
-          while (retryCount < MAX_RETRIES && !allPassed) {
+          const remediationResult = await remediatePRChecks(
+            octokit,
+            owner,
+            repo,
+            targetOwner,
+            branchName,
+            monitorPrNumber,
+            filesToRemediate,
+            phase1Data.project_language || "typescript",
+            sendLog
+          );
+
+          if (remediationResult.success) {
             sendLog(
-              "monitor",
-              `CI watch cycle ${retryCount + 1}/${MAX_RETRIES} on branch "${branchName}"...`
+              "success",
+              `Phase 8 Complete: All ${remediationResult.totalChecks} GitHub Actions checks passed!`
             );
-            let headSha = "";
-            try {
-              const { data: prInfo } = await octokit.rest.pulls.get({
-                owner,
-                repo,
-                pull_number: monitorPrNumber,
-              });
-              headSha = prInfo.head.sha;
-            } catch {
-              sendLog("info", "Could not fetch PR head SHA. Skipping CI loop.");
-              break;
-            }
-
-            // Wait 10s for GitHub CI registration
-            await new Promise((r) => setTimeout(r, 10000));
-            const { data: checkData } = await octokit.rest.checks.listForRef({
-              owner,
-              repo,
-              ref: headSha,
-            });
-
-            if (checkData.total_count === 0) {
-              sendLog("info", "No CI checks detected on this repository. Verification complete.");
-              allPassed = true;
-              break;
-            }
-
-            const pending = checkData.check_runs.filter((r) => r.status !== "completed");
-            if (pending.length === 0) {
-              const failed = checkData.check_runs.filter(
-                (r) => r.conclusion !== "success" && r.conclusion !== "skipped" && r.conclusion !== "neutral"
-              );
-              if (failed.length === 0) {
-                allPassed = true;
-                sendLog("ci_status", `All ${checkData.total_count} CI checks passed!`);
-                break;
-              } else {
-                sendLog("ci_status", `${failed.length} check(s) failed. Auto-remediation engaged.`);
-                retryCount++;
-              }
-            } else {
-              sendLog("monitor", `${pending.length} CI check(s) running. Continuing in background.`);
-              allPassed = true; // Avoid blocking client indefinitely
-              break;
-            }
+          } else {
+            sendLog(
+              "ci_status",
+              `Phase 8 Notice: ${remediationResult.failedChecks.length} checks still pending or failing (${remediationResult.failedChecks.join(
+                ", "
+              )}).`
+            );
           }
         }
 
