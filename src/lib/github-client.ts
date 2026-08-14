@@ -168,22 +168,9 @@ export async function commitFilesMulti(
   message: string,
   files: CommitFileItem[]
 ): Promise<void> {
-  // If single file, use createOrUpdateFileContents
-  if (files.length === 1) {
-    const f = files[0];
-    await octokit.rest.repos.createOrUpdateFileContents({
-      owner,
-      repo,
-      path: f.path,
-      message,
-      content: Buffer.from(f.content).toString("base64"),
-      ...(f.sha ? { sha: f.sha } : {}),
-      branch,
-    });
-    return;
-  }
+  if (!files || files.length === 0) return;
 
-  // Multi-file atomic commit using Git Tree API
+  // Multi-file and single-file atomic commit using Git Tree API (no sha required)
   const { data: branchRef } = await octokit.rest.git.getRef({
     owner,
     repo,
