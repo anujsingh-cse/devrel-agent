@@ -170,6 +170,23 @@ export async function commitFilesMulti(
     commit_sha: latestCommitSha,
   });
 
+  // Get authenticated user info for DCO sign-off
+  let signoffName = "DevRel Contributor";
+  let signoffEmail = "devrel-agent@users.noreply.github.com";
+  try {
+    const { data: user } = await octokit.rest.users.getAuthenticated();
+    signoffName = user.name || user.login;
+    signoffEmail = user.email || `${user.id}+${user.login}@users.noreply.github.com`;
+  } catch {
+    // Fallback if token is unauthenticated or restricted
+  }
+
+  // Format message with Signed-off-by DCO trailer if not already present
+  let formattedMessage = message.trim();
+  if (!formattedMessage.toLowerCase().includes("signed-off-by:")) {
+    formattedMessage = `${formattedMessage}\n\nSigned-off-by: ${signoffName} <${signoffEmail}>`;
+  }
+
   // Create tree entries
   const treeEntries: Array<{
     path: string;
@@ -193,9 +210,17 @@ export async function commitFilesMulti(
   const { data: newCommit } = await octokit.rest.git.createCommit({
     owner,
     repo,
-    message,
+    message: formattedMessage,
     tree: newTree.sha,
     parents: [latestCommitSha],
+    author: {
+      name: signoffName,
+      email: signoffEmail,
+    },
+    committer: {
+      name: signoffName,
+      email: signoffEmail,
+    },
   });
 
   await octokit.rest.git.updateRef({

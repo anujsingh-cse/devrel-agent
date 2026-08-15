@@ -122,14 +122,28 @@ export async function runPRMergerLoop(
       ref: headSha,
     });
 
+    const isCodeCheck = (name: string) => {
+      const lower = name.toLowerCase();
+      return (
+        !lower.includes("dco") &&
+        !lower.includes("cla") &&
+        !lower.includes("license") &&
+        !lower.includes("approval") &&
+        !lower.includes("stale")
+      );
+    };
+
     const failedChecks = checkData.check_runs.filter(
       (r) =>
+        isCodeCheck(r.name) &&
         r.conclusion !== "success" &&
         r.conclusion !== "skipped" &&
         r.conclusion !== "neutral" &&
         r.status === "completed"
     );
-    const runningChecks = checkData.check_runs.filter((r) => r.status !== "completed");
+    const runningChecks = checkData.check_runs.filter(
+      (r) => r.status !== "completed" && isCodeCheck(r.name)
+    );
 
     // If checks are still running, wait for them
     if (runningChecks.length > 0) {

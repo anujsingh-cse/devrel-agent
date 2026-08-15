@@ -89,7 +89,21 @@ export async function remediatePRChecks(
           continue;
         }
 
-        const pending = runs.filter((r) => r.status !== "completed");
+        // Filter out checks that are non-code/admin checks (DCO, CLA, PR approvals, etc.)
+        const isCodeCheck = (name: string) => {
+          const lower = name.toLowerCase();
+          return (
+            !lower.includes("dco") &&
+            !lower.includes("cla") &&
+            !lower.includes("license") &&
+            !lower.includes("approval") &&
+            !lower.includes("stale")
+          );
+        };
+
+        const pending = runs.filter(
+          (r) => r.status !== "completed" && isCodeCheck(r.name)
+        );
         if (pending.length > 0) {
           log?.(
             "monitor",
@@ -99,10 +113,11 @@ export async function remediatePRChecks(
           continue;
         }
 
-        // All checks completed
+        // All code checks completed
         runsFinished = true;
         failedRuns = runs.filter(
           (r) =>
+            isCodeCheck(r.name) &&
             r.conclusion !== "success" &&
             r.conclusion !== "skipped" &&
             r.conclusion !== "neutral"
