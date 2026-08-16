@@ -48,7 +48,7 @@ export async function generateAIText(
       !nvidiaKey.includes("your-free-key") &&
       !nvidiaKey.includes("your_nvidia")
   );
-  const nvidiaModel = process.env.NVIDIA_MODEL || "meta/llama-3.3-70b-instruct";
+  const nvidiaModel = process.env.NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
   const geminiKey = process.env.GEMINI_API_KEY;
   const githubToken = process.env.GITHUB_TOKEN;
 
@@ -56,19 +56,22 @@ export async function generateAIText(
   if (hasNvidiaKey && nvidiaKey) {
     const nvidiaModels = [
       nvidiaModel,
-      "meta/llama-3.3-70b-instruct",
-      "nvidia/llama-3.1-nemotron-70b-instruct",
       "meta/llama-3.1-8b-instruct",
+      "nvidia/llama-3.1-nemotron-70b-instruct",
+      "meta/llama-3.1-70b-instruct",
+      "meta/llama-3.3-70b-instruct",
     ];
-    // Remove duplicate model names
-    const uniqueNvidiaModels = Array.from(new Set(nvidiaModels));
+    // Remove duplicate model names & invalid models
+    const uniqueNvidiaModels = Array.from(new Set(nvidiaModels)).filter(
+      (m) => m && !m.includes("muse-glimmer")
+    );
 
     for (const modelName of uniqueNvidiaModels) {
       try {
         const nvidiaAi = new OpenAI({
           baseURL: "https://integrate.api.nvidia.com/v1",
           apiKey: nvidiaKey.trim(),
-          timeout: 30000,
+          timeout: 18000,
         });
         const res = await nvidiaAi.chat.completions.create({
           model: modelName,

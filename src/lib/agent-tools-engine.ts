@@ -42,19 +42,22 @@ export async function runAutonomousToolAgent(
     );
   }
 
-  const nvidiaModel = process.env.NVIDIA_MODEL || "meta/llama-3.3-70b-instruct";
+  const nvidiaModel = process.env.NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
   const candidateModels = [
     nvidiaModel,
-    "meta/llama-3.3-70b-instruct",
-    "nvidia/llama-3.1-nemotron-70b-instruct",
     "meta/llama-3.1-8b-instruct",
+    "nvidia/llama-3.1-nemotron-70b-instruct",
+    "meta/llama-3.1-70b-instruct",
+    "meta/llama-3.3-70b-instruct",
   ];
-  const uniqueModels = Array.from(new Set(candidateModels));
+  const uniqueModels = Array.from(new Set(candidateModels)).filter(
+    (m) => m && !m.includes("muse-glimmer")
+  );
 
   const openai = new OpenAI({
     baseURL: "https://integrate.api.nvidia.com/v1",
     apiKey: nvidiaKey.trim(),
-    timeout: 35000,
+    timeout: 18000,
   });
 
   const tools = toOpenAITools(DEVREL_TOOLS);
@@ -108,6 +111,7 @@ Your goal is to autonomously explore the codebase, formulate high-quality engine
 
     let response: OpenAI.ChatCompletion | null = null;
     let usedModel = nvidiaModel;
+    const modelErrors: string[] = [];
 
     for (const modelName of uniqueModels) {
       try {
@@ -122,12 +126,15 @@ Your goal is to autonomously explore the codebase, formulate high-quality engine
         break;
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        log?.("info", `NVIDIA NIM model ${modelName} call retry (${errMsg.slice(0, 60)}...).`);
+        modelErrors.push(`${modelName}: ${errMsg.slice(0, 70)}`);
+        log?.("info", `NVIDIA NIM model ${modelName} retry (${errMsg.slice(0, 80)}...).`);
       }
     }
 
     if (!response) {
-      throw new Error("All NVIDIA NIM inference calls failed. Check API key and rate limits.");
+      throw new Error(
+        `All NVIDIA NIM inference calls failed. Errors: ${modelErrors.join("; ")}`
+      );
     }
 
     const choice = response.choices[0];
