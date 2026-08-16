@@ -43,7 +43,8 @@ export function validateAndParseGitHubUrl(rawUrl: string): {
     throw new Error("URL path must follow format: github.com/{owner}/{repo} or github.com/{owner}/{repo}/{issues|pull}/{number}");
   }
 
-  const [owner, repo, type, numberStr] = parts;
+  const [owner, rawRepo, type, numberStr] = parts;
+  const repo = rawRepo ? rawRepo.replace(/\.git$/i, "") : "";
 
   // Validate owner and repo names (standard GitHub naming conventions)
   const nameRegex = /^[a-zA-Z0-9._-]+$/;
