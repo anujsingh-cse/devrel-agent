@@ -25,6 +25,8 @@ import {
   ExternalLink,
   X,
   Lock,
+  Cpu,
+  Wrench,
 } from "lucide-react";
 import { FaGithub } from "react-icons/fa";
 import { Badge } from "@/components/ui/Badge";
@@ -497,6 +499,18 @@ export default function DevRelAgent() {
             <div className="flex items-center gap-2 p-1.5 rounded-xl bg-muted border border-border w-fit flex-wrap">
               <button
                 type="button"
+                onClick={() => setAgentMode("tool_calling_agent")}
+                className={`px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all flex items-center gap-2 ${
+                  agentMode === "tool_calling_agent"
+                    ? "bg-white text-foreground shadow-sm font-semibold ring-1 ring-purple-500"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Cpu className="h-4 w-4 text-purple-600" />
+                <span>NVIDIA Tool Agent (ReAct)</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => setAgentMode("elite_pr_contributor")}
                 className={`px-4 py-2 rounded-lg font-medium text-xs sm:text-sm transition-all flex items-center gap-2 ${
                   agentMode === "elite_pr_contributor"
@@ -539,7 +553,9 @@ export default function DevRelAgent() {
                 <Input
                   type="url"
                   placeholder={
-                    agentMode === "pr_merger_autopilot"
+                    agentMode === "tool_calling_agent"
+                      ? "Paste GitHub Repo (github.com/owner/repo), Issue, or PR URL..."
+                      : agentMode === "pr_merger_autopilot"
                       ? "Paste GitHub PR URL (e.g. github.com/owner/repo/pull/123)..."
                       : agentMode === "elite_pr_contributor"
                       ? "Paste GitHub PR or Issue URL..."
@@ -563,7 +579,13 @@ export default function DevRelAgent() {
                     disabled={!issueUrl}
                     className="w-full sm:w-auto shrink-0"
                   >
-                    <span>{agentMode === "pr_merger_autopilot" ? "Start Merge Loop" : "Execute Workflow"}</span>
+                    <span>
+                      {agentMode === "pr_merger_autopilot"
+                        ? "Start Merge Loop"
+                        : agentMode === "tool_calling_agent"
+                        ? "Run Autonomous Agent"
+                        : "Execute Workflow"}
+                    </span>
                     <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
                   </Button>
                 )}
@@ -572,6 +594,16 @@ export default function DevRelAgent() {
               {/* 1-Click Quick Demo Chips */}
               <div className="flex items-center gap-2 pt-1 flex-wrap text-xs">
                 <span className="text-muted-foreground font-mono text-[11px]">Quick Demos:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIssueUrl("https://github.com/facebook/react");
+                    setAgentMode("tool_calling_agent");
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 text-[11px] font-mono transition-all cursor-pointer font-semibold"
+                >
+                  React (Autonomous Audit &amp; Fix)
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -788,12 +820,26 @@ export default function DevRelAgent() {
                           CI
                         </span>
                       )}
+                      {log.type === "tool_call" && (
+                        <span className="text-purple-300 font-bold shrink-0 bg-purple-950 px-1.5 py-0.5 rounded border border-purple-800 flex items-center gap-1">
+                          <Wrench className="h-3 w-3 text-purple-400" /> TOOL
+                        </span>
+                      )}
+                      {log.type === "tool_result" && (
+                        <span className="text-cyan-300 font-bold shrink-0 bg-cyan-950 px-1.5 py-0.5 rounded border border-cyan-800 flex items-center gap-1">
+                          <Check className="h-3 w-3 text-cyan-400" /> RESULT
+                        </span>
+                      )}
                       <span
                         className={`break-all ${
                           log.type === "phase"
                             ? "text-cyan-200 font-semibold"
                             : log.type === "ci_status"
                             ? "text-teal-200 font-semibold"
+                            : log.type === "tool_call"
+                            ? "text-purple-200 font-medium font-mono"
+                            : log.type === "tool_result"
+                            ? "text-cyan-200 font-mono text-[11px]"
                             : log.type === "monitor"
                             ? "text-amber-200"
                             : log.type === "error"
@@ -847,6 +893,66 @@ export default function DevRelAgent() {
                 </a>
               )}
             </div>
+
+            {/* Autonomously Created Issue Banner (if proactive audit) */}
+            {finalResult.createdIssueUrl && (
+              <div className="p-4 rounded-xl border border-purple-500/30 bg-purple-950/40 flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <span className="p-2 rounded-lg bg-purple-500/20 text-purple-300">
+                    <AlertTriangle className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <div className="text-xs font-mono uppercase text-purple-300 font-bold">
+                      Autonomously Opened GitHub Issue
+                    </div>
+                    <div className="text-sm font-semibold text-white mt-0.5">
+                      Issue #{finalResult.createdIssueNumber || "Proactive Discovery"}
+                    </div>
+                  </div>
+                </div>
+                <a
+                  href={finalResult.createdIssueUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-mono font-semibold flex items-center gap-1.5 transition-colors shrink-0"
+                >
+                  <span>View Issue on GitHub</span>
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              </div>
+            )}
+
+            {/* Tool Executions Summary (if tool calling agent) */}
+            {finalResult.toolExecutions && finalResult.toolExecutions.length > 0 && (
+              <div className="p-5 rounded-xl border border-slate-800 bg-slate-950 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="h-4 w-4 text-purple-400" />
+                    <span className="font-mono text-xs text-purple-300 font-semibold uppercase">
+                      NVIDIA NIM Autonomous Tool Invocations ({finalResult.toolExecutions.length} calls)
+                    </span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[10px] font-mono">
+                    ReAct Loop
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-48 overflow-y-auto scrollbar-thin">
+                  {finalResult.toolExecutions.map((t, idx) => (
+                    <div
+                      key={idx}
+                      className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-mono space-y-1"
+                    >
+                      <div className="flex items-center justify-between text-purple-300 font-bold text-[11px]">
+                        <span>#{idx + 1} {t.name}</span>
+                      </div>
+                      <div className="text-slate-400 text-[10px] truncate">
+                        {t.summary}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Generated Code Files (Dry Run or Direct Inspection) */}
             {finalResult.generatedCode && finalResult.generatedCode.length > 0 && (

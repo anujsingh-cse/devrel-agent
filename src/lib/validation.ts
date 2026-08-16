@@ -9,6 +9,7 @@ export function validateAndParseGitHubUrl(rawUrl: string): {
   repo: string;
   targetNumber: string;
   isPR: boolean;
+  isRepoOnly?: boolean;
 } {
   if (!rawUrl || typeof rawUrl !== "string") {
     throw new Error("GitHub URL must be a non-empty string.");
@@ -35,19 +36,14 @@ export function validateAndParseGitHubUrl(rawUrl: string): {
   const parts = pathname.split("/");
 
   // Expected patterns:
+  // owner/repo (repo root)
   // owner/repo/issues/123
   // owner/repo/pull/123
-  if (parts.length < 4) {
-    throw new Error("URL path must follow format: github.com/{owner}/{repo}/{issues|pull}/{number}");
+  if (parts.length < 2) {
+    throw new Error("URL path must follow format: github.com/{owner}/{repo} or github.com/{owner}/{repo}/{issues|pull}/{number}");
   }
 
   const [owner, repo, type, numberStr] = parts;
-  const isPR = type === "pull";
-  const isIssue = type === "issues";
-
-  if (!isPR && !isIssue) {
-    throw new Error("Target URL must point to an issue or pull request.");
-  }
 
   // Validate owner and repo names (standard GitHub naming conventions)
   const nameRegex = /^[a-zA-Z0-9._-]+$/;
@@ -55,17 +51,41 @@ export function validateAndParseGitHubUrl(rawUrl: string): {
     throw new Error("Invalid characters in repository owner or name.");
   }
 
-  const num = parseInt(numberStr, 10);
-  if (isNaN(num) || num <= 0 || !/^\d+$/.test(numberStr)) {
-    throw new Error("Invalid Issue/PR number.");
+  // Case 1: Repo root only (e.g. github.com/owner/repo)
+  if (parts.length === 2) {
+    return {
+      owner,
+      repo,
+      targetNumber: "",
+      isPR: false,
+      isRepoOnly: true,
+    };
   }
 
-  return {
-    owner,
-    repo,
-    targetNumber: numberStr,
-    isPR,
-  };
+  // Case 2: Issue or PR
+  if (parts.length >= 4) {
+    const isPR = type === "pull";
+    const isIssue = type === "issues";
+
+    if (!isPR && !isIssue) {
+      throw new Error("Target URL subpath must point to an issue or pull request.");
+    }
+
+    const num = parseInt(numberStr, 10);
+    if (isNaN(num) || num <= 0 || !/^\d+$/.test(numberStr)) {
+      throw new Error("Invalid Issue/PR number.");
+    }
+
+    return {
+      owner,
+      repo,
+      targetNumber: numberStr,
+      isPR,
+      isRepoOnly: false,
+    };
+  }
+
+  throw new Error("URL path must follow format: github.com/{owner}/{repo} or github.com/{owner}/{repo}/{issues|pull}/{number}");
 }
 
 /**
@@ -91,7 +111,7 @@ export const gitHubTokenSchema = z
 export const AgentRequestSchema = z.object({
   url: z.string().min(1, "GitHub URL is required").max(1000),
   mode: z
-    .enum(["issue_fix", "elite_pr_contributor", "pr_merger_autopilot"])
+    .enum(["issue_fix", "elite_pr_contributor", "pr_merger_autopilot", "tool_calling_agent"])
     .default("elite_pr_contributor"),
   reviewComments: z.string().max(50000, "Review comments too large").optional(),
   ciLogs: z.string().max(100000, "CI logs too large").optional(),

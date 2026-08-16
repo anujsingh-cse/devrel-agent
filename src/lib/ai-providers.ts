@@ -21,7 +21,20 @@ export function safeParseJSON<T>(raw: string, fallback: T): T {
 }
 
 export interface LoggerFn {
-  (type: "info" | "action" | "phase" | "success" | "error" | "monitor" | "ci_status", text: string): void;
+  (
+    type:
+      | "info"
+      | "action"
+      | "phase"
+      | "success"
+      | "error"
+      | "monitor"
+      | "ci_status"
+      | "tool_call"
+      | "tool_result",
+    text: string,
+    payload?: unknown
+  ): void;
 }
 
 export async function generateAIText(
@@ -29,19 +42,23 @@ export async function generateAIText(
   isJson = false,
   log?: LoggerFn
 ): Promise<string> {
-  const geminiKey = process.env.GEMINI_API_KEY;
   const nvidiaKey = process.env.NVIDIA_API_KEY || process.env.NEMOTRON_API_KEY;
-  const hasNvidiaKey = Boolean(nvidiaKey && !nvidiaKey.includes("your-free-key") && !nvidiaKey.includes("your_nvidia"));
-  const nvidiaModel = process.env.NVIDIA_MODEL || "meta/llama-3.1-8b-instruct";
+  const hasNvidiaKey = Boolean(
+    nvidiaKey &&
+      !nvidiaKey.includes("your-free-key") &&
+      !nvidiaKey.includes("your_nvidia")
+  );
+  const nvidiaModel = process.env.NVIDIA_MODEL || "meta/llama-3.3-70b-instruct";
+  const geminiKey = process.env.GEMINI_API_KEY;
   const githubToken = process.env.GITHUB_TOKEN;
 
-  // 1. NVIDIA NIM OpenAI-compatible API (Primary)
+  // 1. NVIDIA NIM OpenAI-compatible API (Primary & Exclusively Recommended)
   if (hasNvidiaKey && nvidiaKey) {
     const nvidiaModels = [
       nvidiaModel,
-      "meta/llama-3.1-8b-instruct",
       "meta/llama-3.3-70b-instruct",
       "nvidia/llama-3.1-nemotron-70b-instruct",
+      "meta/llama-3.1-8b-instruct",
     ];
     // Remove duplicate model names
     const uniqueNvidiaModels = Array.from(new Set(nvidiaModels));
@@ -51,11 +68,12 @@ export async function generateAIText(
         const nvidiaAi = new OpenAI({
           baseURL: "https://integrate.api.nvidia.com/v1",
           apiKey: nvidiaKey.trim(),
-          timeout: 25000,
+          timeout: 30000,
         });
         const res = await nvidiaAi.chat.completions.create({
           model: modelName,
           messages: [{ role: "user", content: prompt }],
+          ...(isJson ? { response_format: { type: "json_object" } } : {}),
         });
         const text = res.choices[0]?.message?.content;
         if (text) {

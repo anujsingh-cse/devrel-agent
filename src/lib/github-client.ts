@@ -7,12 +7,12 @@ export interface ParsedGitHubUrl {
   repo: string;
   targetNumber: string;
   isPR: boolean;
+  isRepoOnly?: boolean;
 }
 
 export function parseGitHubUrl(url: string): ParsedGitHubUrl {
   return validateAndParseGitHubUrl(url);
 }
-
 
 export function getOctokit(customToken?: string): Octokit {
   const token = customToken?.trim() || process.env.GITHUB_TOKEN?.trim();
@@ -76,6 +76,52 @@ export async function fetchFileContent(
   return {
     content: Buffer.from(fileData.content, "base64").toString("utf-8"),
     sha: fileData.sha,
+  };
+}
+
+export async function createGitHubIssue(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  title: string,
+  body: string,
+  labels: string[] = ["bot", "devrel-agent", "bug"]
+): Promise<{ number: number; html_url: string }> {
+  const { data: issue } = await octokit.rest.issues.create({
+    owner,
+    repo,
+    title,
+    body,
+    labels,
+  });
+  return {
+    number: issue.number,
+    html_url: issue.html_url,
+  };
+}
+
+export async function createPullRequest(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  targetOwner: string,
+  branchName: string,
+  defaultBranch: string,
+  title: string,
+  body: string
+): Promise<{ number: number; html_url: string }> {
+  const head = targetOwner === owner ? branchName : `${targetOwner}:${branchName}`;
+  const { data: pr } = await octokit.rest.pulls.create({
+    owner,
+    repo,
+    title,
+    body,
+    head,
+    base: defaultBranch,
+  });
+  return {
+    number: pr.number,
+    html_url: pr.html_url,
   };
 }
 
@@ -230,3 +276,4 @@ export async function commitFilesMulti(
     sha: newCommit.sha,
   });
 }
+

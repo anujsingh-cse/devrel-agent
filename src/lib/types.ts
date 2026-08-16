@@ -1,6 +1,19 @@
-export type AgentMode = "issue_fix" | "elite_pr_contributor" | "pr_merger_autopilot";
+export type AgentMode =
+  | "issue_fix"
+  | "elite_pr_contributor"
+  | "pr_merger_autopilot"
+  | "tool_calling_agent";
 
-export type LogType = "phase" | "info" | "action" | "success" | "error" | "monitor" | "ci_status";
+export type LogType =
+  | "phase"
+  | "info"
+  | "action"
+  | "success"
+  | "error"
+  | "monitor"
+  | "ci_status"
+  | "tool_call"
+  | "tool_result";
 
 export interface AgentRequestBody {
   url?: string;
@@ -52,6 +65,12 @@ export interface SatisfactionItem {
   testCoverage: string;
 }
 
+export interface ToolExecutionSummary {
+  name: string;
+  args: Record<string, unknown>;
+  summary: string;
+}
+
 export interface FinalResultPayload {
   prUrl: string;
   satisfactionMatrix: SatisfactionItem[];
@@ -61,11 +80,26 @@ export interface FinalResultPayload {
   filesModified?: string[];
   isDryRun?: boolean;
   generatedCode?: { path: string; content: string }[];
+  createdIssueUrl?: string;
+  createdIssueNumber?: number;
+  toolCallsCount?: number;
+  toolExecutions?: ToolExecutionSummary[];
 }
 
 export interface LogEvent {
   time: string;
-  type: "phase" | "info" | "action" | "success" | "error" | "monitor" | "ci_status" | "result";
+  type:
+    | "phase"
+    | "info"
+    | "action"
+    | "success"
+    | "error"
+    | "monitor"
+    | "ci_status"
+    | "tool_call"
+    | "tool_result"
+    | "result";
   text: string;
   payload?: unknown;
 }
+

@@ -19,6 +19,8 @@ import {
 } from "@/lib/types";
 import { remediatePRChecks } from "@/lib/ci-remediator";
 import { AgentRequestSchema, sanitizeForPrompt } from "@/lib/validation";
+import { runAutonomousToolAgent } from "@/lib/agent-tools-engine";
+import { ToolExecutionContext } from "@/lib/tools/executor";
 
 export async function POST(req: NextRequest) {
   // Validate Auth, Origin & In-memory Rate Limit
@@ -70,7 +72,17 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       const sendLog = (
-        type: "phase" | "info" | "action" | "success" | "error" | "monitor" | "ci_status" | "result",
+        type:
+          | "phase"
+          | "info"
+          | "action"
+          | "success"
+          | "error"
+          | "monitor"
+          | "ci_status"
+          | "tool_call"
+          | "tool_result"
+          | "result",
         text: string,
         payload?: unknown
       ) => {
@@ -88,12 +100,12 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        if (!url) throw new Error("GitHub Issue or PR URL is required.");
-        const { owner, repo, targetNumber, isPR } = parseGitHubUrl(url);
+        if (!url) throw new Error("GitHub Issue, PR, or Repository URL is required.");
+        const { owner, repo, targetNumber, isPR, isRepoOnly } = parseGitHubUrl(url);
 
         sendLog(
           "info",
-          `Target: ${owner}/${repo} #${targetNumber} | Mode=${mode} | Execution=${isDryRun ? "Safe Preview (Dry-Run)" : "Direct GitHub Push (User Auth)"}`
+          `Target: ${owner}/${repo}${targetNumber ? ` #${targetNumber}` : " (Repository Root)"} | Mode=${mode} | Execution=${isDryRun ? "Safe Preview (Dry-Run)" : "Direct GitHub Push (User Auth)"}`
         );
 
         const octokit = getOctokit(userToken);
@@ -102,12 +114,12 @@ export async function POST(req: NextRequest) {
           `Initialized AI inference pipeline with NVIDIA NIM & GitHub Octokit (${hasUserToken ? "User Personal Token" : "Read-Only Sandbox"}).`
         );
 
-        // Fetch Issue / PR Details
+        // Fetch Issue / PR Details if not whole-repo audit
         let itemTitle = "";
         let itemBody = "";
         let fetchedCommentsText = "";
 
-        if (isPR) {
+        if (isPR && targetNumber) {
           sendLog("info", `Fetching Pull Request #${targetNumber} details from GitHub...`);
           const { data: pr } = await octokit.rest.pulls.get({
             owner,
@@ -139,7 +151,7 @@ export async function POST(req: NextRequest) {
           } catch {
             sendLog("info", "Inline PR review comments fetch bypassed.");
           }
-        } else {
+        } else if (!isRepoOnly && targetNumber) {
           sendLog("info", `Fetching issue #${targetNumber} metadata from GitHub...`);
           const { data: issue } = await octokit.rest.issues.get({
             owner,
@@ -170,6 +182,43 @@ export async function POST(req: NextRequest) {
         const sanitizedCiLogs = sanitizeForPrompt(ciLogs || "", 10000);
         const sanitizedItemBody = sanitizeForPrompt(itemBody, 6000);
 
+        // Branch 1: Autonomous ReAct Tool-Calling Agent Mode
+        if (mode === "tool_calling_agent") {
+          const ctx: ToolExecutionContext = {
+            octokit,
+            owner,
+            repo,
+            targetNumber,
+            isPR,
+            isRepoOnly,
+            userToken,
+            isDryRun,
+            stagedFiles: new Map(),
+            log: sendLog,
+          };
+
+          const toolResult = await runAutonomousToolAgent(
+            {
+              owner,
+              repo,
+              targetNumber,
+              isPR,
+              isRepoOnly,
+              userContext: [itemTitle, sanitizedItemBody, sanitizedReviewComments].filter(Boolean).join("\n\n"),
+              ciLogs: sanitizedCiLogs,
+              userToken,
+              isDryRun,
+              maxSteps: 12,
+              log: sendLog,
+            },
+            ctx
+          );
+
+          sendLog("result", "NVIDIA NIM Autonomous ReAct Agent Completed Successfully!", toolResult);
+          controller.close();
+          return;
+        }
+
         sendLog("info", "Scanning repository file tree...");
         const files = await fetchFileTree(octokit, owner, repo);
         let filesString = files.join("\n");
@@ -177,6 +226,7 @@ export async function POST(req: NextRequest) {
           filesString = filesString.substring(0, 25000) + "\n... (truncated)";
         }
         sendLog("success", `Indexed ${files.length} relevant repository files.`);
+
 
         // --- PHASE 1: REVIEW ANALYSIS & TECH STACK DETECTION ---
         sendLog(
