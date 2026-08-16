@@ -193,9 +193,9 @@ export function toOpenAITools(tools: ToolDefinition[]): OpenAI.ChatCompletionToo
       name: tool.name,
       description: tool.description,
       parameters: {
-        type: tool.parameters.type,
-        properties: tool.parameters.properties,
-        ...(tool.parameters.required ? { required: tool.parameters.required } : {}),
+        type: "object",
+        properties: tool.parameters.properties || {},
+        required: tool.parameters.required || [],
       },
     },
   }));
