@@ -22,6 +22,9 @@ import { AgentRequestSchema, sanitizeForPrompt } from "@/lib/validation";
 import { runAutonomousToolAgent } from "@/lib/agent-tools-engine";
 import { ToolExecutionContext } from "@/lib/tools/executor";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
 export async function POST(req: NextRequest) {
   // Validate Auth, Origin & In-memory Rate Limit
   const auth = validateApiAccess(req);
@@ -98,6 +101,14 @@ export async function POST(req: NextRequest) {
         });
         controller.enqueue(encoder.encode(`data: ${data}\n\n`));
       };
+
+      const heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: heartbeat\n\n`));
+        } catch {
+          clearInterval(heartbeat);
+        }
+      }, 10000);
 
       try {
         if (!url) throw new Error("GitHub Issue, PR, or Repository URL is required.");
@@ -607,6 +618,8 @@ Write a clean, human-like PR description.
         const message = err instanceof Error ? err.message : "Unknown error";
         sendLog("error", `Error: ${message}`);
         controller.close();
+      } finally {
+        clearInterval(heartbeat);
       }
     },
   });

@@ -4,6 +4,9 @@ import { runPRMergerLoop } from "@/lib/pr-merger-agent";
 import { LogType } from "@/lib/types";
 import { PRMergerRequestSchema } from "@/lib/validation";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
 export async function POST(req: NextRequest) {
   const auth = validateApiAccess(req);
   if (!auth.allowed) {
@@ -46,6 +49,14 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${data}\n\n`));
       };
 
+      const heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: heartbeat\n\n`));
+        } catch {
+          clearInterval(heartbeat);
+        }
+      }, 10000);
+
       try {
         const result = await runPRMergerLoop(
           {
@@ -62,6 +73,7 @@ export async function POST(req: NextRequest) {
         const errorMsg = err instanceof Error ? err.message : String(err);
         sendLog("error", `PR Autopilot error: ${errorMsg}`);
       } finally {
+        clearInterval(heartbeat);
         controller.close();
       }
     },

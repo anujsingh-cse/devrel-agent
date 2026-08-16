@@ -333,12 +333,10 @@ export async function runAutonomousToolAgent(
     "meta/llama-3.3-70b-instruct",
     "meta/llama-3.1-70b-instruct",
     "meta/llama-3.1-8b-instruct",
-    "mistralai/mistral-large-2-instruct",
     "qwen/qwen2.5-72b-instruct",
-    "deepseek-ai/deepseek-r1",
   ];
   const uniqueNvidiaModels = Array.from(new Set(candidateNvidiaModels)).filter(
-    (m) => m && !m.includes("muse-glimmer") && !m.includes("nemotron-70b-instruct")
+    (m) => m && !m.includes("muse-glimmer") && !m.includes("nemotron-70b-instruct") && !m.includes("deepseek-r1")
   );
 
   const tools = toOpenAITools(DEVREL_TOOLS);
@@ -402,7 +400,7 @@ Your goal is to autonomously explore the codebase, formulate high-quality engine
           const nvidiaClient = new OpenAI({
             baseURL: "https://integrate.api.nvidia.com/v1",
             apiKey: nvidiaKey.trim(),
-            timeout: 60000,
+            timeout: 25000,
           });
 
           for (const modelName of uniqueNvidiaModels) {
